@@ -15,8 +15,8 @@ const MIN_DEBT_WHOLE: u64 = 2000;
 const SCALE: u64 = 1_000_000_000_000_000_000;
 /// Maximum interest rate in basis points (40% = 4000 bps)
 const MAX_INTEREST_RATE_BPS: u32 = 4000;
-/// Exchange rate scale (1000 = 1.0)
-const RATE_SCALE: u64 = 1000;
+/// Exchange rate scale (1e18) - must match ScsprYbToken's SCALE
+const RATE_SCALE: u64 = 1_000_000_000_000_000_000;
 
 /// Entry in the sorted vault list (by interest rate)
 #[odra::odra_type]

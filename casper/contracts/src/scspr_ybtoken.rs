@@ -224,15 +224,8 @@ impl ScsprYbToken {
         }
 
         // Calculate shares to mint: shares = assets / R = assets * total_shares / total_assets
+        // Note: convert_to_shares handles first deposit (returns 1:1 when total_shares is zero)
         let shares_to_mint = self.convert_to_shares(cspr_amount);
-
-        // Handle first deposit (bootstrap)
-        let shares_to_mint = if self.total_shares().is_zero() {
-            // First deposit: 1:1 ratio
-            cspr_amount
-        } else {
-            shares_to_mint
-        };
 
         // Update assets (add to idle)
         let mut assets = self.assets.get().unwrap_or_default();
