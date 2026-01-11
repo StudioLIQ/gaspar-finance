@@ -284,7 +284,7 @@ export function CdpOpenVaultCard({
         {/* Info */}
         <div className="text-xs text-gray-500 space-y-1">
           <p>• Minimum collateral ratio: {CDP_CONSTANTS.MCR_BPS / 100}%</p>
-          <p>• Minimum debt: 2,000 gUSD</p>
+          <p>• Minimum debt: 1 gUSD</p>
           <p>• Borrowing fee: {CDP_CONSTANTS.BORROWING_FEE_BPS / 100}%</p>
         </div>
       </div>

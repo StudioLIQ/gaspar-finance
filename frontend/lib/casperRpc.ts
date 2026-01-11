@@ -1912,7 +1912,7 @@ export function calculateIcr(collateralValueUsd: bigint, debt: bigint): number {
 export const CDP_CONSTANTS = {
   MCR_BPS: 11000, // 110% minimum collateralization ratio
   CCR_BPS: 15000, // 150% critical collateralization ratio
-  MIN_DEBT: BigInt('2000000000000000000000'), // 2000 gUSD (18 decimals)
+  MIN_DEBT: BigInt('1000000000000000000'), // 1 gUSD (18 decimals)
   LIQUIDATION_PENALTY_BPS: 1000, // 10%
   BORROWING_FEE_BPS: 50, // 0.5%
   MIN_INTEREST_RATE_BPS: 0,

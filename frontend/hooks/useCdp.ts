@@ -36,7 +36,7 @@ import {
 const REFRESH_INTERVAL_MS = 30_000;
 
 // Transaction status
-export type TxStatus = 'idle' | 'signing' | 'pending' | 'success' | 'error';
+export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
 
 // User balances
 export interface UserBalances {
@@ -229,7 +229,7 @@ export function useCdp(): CdpState & CdpActions {
 
       if (debtAmount < CDP_CONSTANTS.MIN_DEBT) {
         isValid = false;
-        error = 'Minimum debt is 2,000 gUSD';
+        error = 'Minimum debt is 1 gUSD';
       }
 
       return {
