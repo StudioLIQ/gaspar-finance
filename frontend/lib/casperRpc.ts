@@ -755,22 +755,107 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
 
 // ========== Oracle Price Query ==========
 
-// Default CSPR price: $0.02 (scaled to 18 decimals)
-// This is a fallback when oracle can't be read
-const DEFAULT_CSPR_PRICE = BigInt('20000000000000000'); // 0.02 * 1e18
+// Default CSPR price: $0.005 (scaled to 18 decimals)
+// This is a fallback when all APIs fail
+const DEFAULT_CSPR_PRICE = BigInt('5000000000000000'); // 0.005 * 1e18
 
-// Get collateral price
-// NOTE: Styks oracle is also an Odra contract and can't be read directly
-// In production, this would need a backend service to call the oracle
+// Cached CSPR price with source tracking
+let cachedCsprPrice: { price: bigint; timestamp: number; source: string } | null = null;
+const PRICE_CACHE_TTL_MS = 5 * 60_000; // 5 minute cache to reduce API calls
+
+// Price source fetch functions
+// Using multiple sources for redundancy and rate limit avoidance
+
+// CoinPaprika - stable, no API key required
+async function fetchCoinPaprikaPrice(): Promise<number | null> {
+  try {
+    const response = await fetch(
+      'https://api.coinpaprika.com/v1/tickers/cspr-casper-network',
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.quotes?.USD?.price ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// CryptoCompare - stable, no API key for basic usage
+async function fetchCryptoComparePrice(): Promise<number | null> {
+  try {
+    const response = await fetch(
+      'https://min-api.cryptocompare.com/data/price?fsym=CSPR&tsyms=USD',
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.USD ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// CoinGecko - popular but rate limited
+async function fetchCoinGeckoPrice(): Promise<number | null> {
+  try {
+    const response = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=casper-network&vs_currencies=usd',
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.['casper-network']?.usd ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Multi-source price fetcher with fallback
+async function fetchCsprPriceMultiSource(): Promise<bigint | null> {
+  // Return cached price if still valid
+  if (cachedCsprPrice && Date.now() - cachedCsprPrice.timestamp < PRICE_CACHE_TTL_MS) {
+    return cachedCsprPrice.price;
+  }
+
+  // Try sources in order: CoinPaprika -> CryptoCompare -> CoinGecko
+  const sources: Array<{ name: string; fetch: () => Promise<number | null> }> = [
+    { name: 'CoinPaprika', fetch: fetchCoinPaprikaPrice },
+    { name: 'CryptoCompare', fetch: fetchCryptoComparePrice },
+    { name: 'CoinGecko', fetch: fetchCoinGeckoPrice },
+  ];
+
+  for (const source of sources) {
+    const price = await source.fetch();
+    if (typeof price === 'number' && price > 0) {
+      const priceWei = BigInt(Math.floor(price * 1e18));
+      cachedCsprPrice = { price: priceWei, timestamp: Date.now(), source: source.name };
+      console.log(`[Oracle] CSPR price from ${source.name}: $${price.toFixed(6)}`);
+      return priceWei;
+    }
+  }
+
+  // All sources failed, return cached if exists (even if stale)
+  if (cachedCsprPrice) {
+    console.warn('[Oracle] All sources failed, using stale cache');
+    return cachedCsprPrice.price;
+  }
+
+  console.warn('[Oracle] All price sources unavailable');
+  return null;
+}
+
+// Get collateral price (multi-source with fallback)
 export async function getCollateralPrice(collateralType: CollateralType): Promise<bigint> {
-  console.debug('[RPC] getCollateralPrice:', ODRA_READ_LIMITATION_MSG);
+  const csprPrice = await fetchCsprPriceMultiSource();
+  const price = csprPrice ?? DEFAULT_CSPR_PRICE;
 
-  // Return default price since oracle can't be read
   if (collateralType === 'cspr') {
-    return DEFAULT_CSPR_PRICE;
+    return price;
   } else {
     // stCSPR price = CSPR price * 1.0 (default exchange rate)
-    return DEFAULT_CSPR_PRICE;
+    // In production, multiply by exchange rate from ybToken
+    return price;
   }
 }
 
