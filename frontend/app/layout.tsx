@@ -7,8 +7,8 @@ export const metadata: Metadata = {
   title: 'GasparFinance | Casper Testnet',
   description: 'Casper-native CDP protocol frontend for Casper Testnet',
   icons: {
-    icon: '/favicon.svg',
-    shortcut: '/favicon.svg',
+    icon: '/protocol-logo.webp',
+    shortcut: '/protocol-logo.webp',
   },
 };
 
