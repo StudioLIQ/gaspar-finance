@@ -938,32 +938,88 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
   }
 }
 
-// Get collateral price from oracle adapter
-export async function getCollateralPrice(collateralType: CollateralType): Promise<bigint> {
-  const oracleHash = CONTRACTS.oracleAdapter;
-  if (!oracleHash || oracleHash === 'null') {
-    // Default price: 1 CSPR = $0.02 (scaled to 18 decimals)
-    return BigInt('20000000000000000'); // 0.02 * 1e18
+// Styks Oracle contract package hash (Casper Testnet)
+const STYKS_PRICE_FEED = '2879d6e927289197aab0101cc033f532fe22e4ab4686e44b5743cb1333031acc';
+
+// Get CSPR/USD price from Styks oracle
+async function getStyksCsprPrice(): Promise<bigint | null> {
+  try {
+    const network = getNetworkConfig();
+    const stateRootHash = await getStateRootHash();
+    if (!stateRootHash) return null;
+
+    // Query Styks price feed for CSPR/USD TWAP
+    const response = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'query_global_state',
+        params: {
+          state_identifier: { StateRootHash: stateRootHash },
+          key: `hash-${STYKS_PRICE_FEED}`,
+          path: ['twap_prices', 'CSPRUSD'],
+        },
+      }),
+    });
+
+    const data = await response.json();
+    if (data.result?.stored_value?.CLValue?.parsed) {
+      // Styks returns price data - extract the price value
+      const priceData = data.result.stored_value.CLValue.parsed;
+      // Handle different possible formats
+      if (typeof priceData === 'string') {
+        return BigInt(priceData);
+      } else if (priceData.price) {
+        return BigInt(priceData.price);
+      } else if (priceData.value) {
+        return BigInt(priceData.value);
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to get Styks CSPR price:', error);
+    return null;
   }
+}
+
+// Get collateral price (from Styks oracle, fallback to default)
+export async function getCollateralPrice(collateralType: CollateralType): Promise<bigint> {
+  // Default price: 1 CSPR = $0.02 (scaled to 18 decimals)
+  const DEFAULT_PRICE = BigInt('20000000000000000'); // 0.02 * 1e18
 
   try {
+    // Try to get CSPR price from Styks
+    const csprPrice = await getStyksCsprPrice();
+
+    if (csprPrice === null) {
+      console.warn('Styks oracle unavailable, using default price');
+      return DEFAULT_PRICE;
+    }
+
     if (collateralType === 'cspr') {
-      const priceRaw = await queryContractNamedKey(oracleHash, 'last_good_price');
-      return BigInt(String(priceRaw || '20000000000000000'));
+      return csprPrice;
     } else {
       // stCSPR price = CSPR price * exchange rate
-      const [priceRaw, rateRaw] = await Promise.all([
-        queryContractNamedKey(oracleHash, 'last_good_price'),
-        queryContractNamedKey(oracleHash, 'last_good_exchange_rate'),
-      ]);
-      const csprPrice = BigInt(String(priceRaw || '20000000000000000'));
-      const exchangeRate = BigInt(String(rateRaw || '1000000000000000000'));
-      // stCSPR price = CSPR price * exchange rate / 1e18
-      return (csprPrice * exchangeRate) / BigInt('1000000000000000000');
+      // Get exchange rate from LST ybToken
+      const lstHash = CONTRACTS.scsprYbtoken;
+      if (!lstHash || lstHash === 'null') {
+        return csprPrice; // Default rate = 1.0
+      }
+
+      try {
+        const rateRaw = await queryContractNamedKey(lstHash, 'exchange_rate');
+        const exchangeRate = BigInt(String(rateRaw || '1000000000000000000'));
+        // stCSPR price = CSPR price * exchange rate / 1e18
+        return (csprPrice * exchangeRate) / BigInt('1000000000000000000');
+      } catch {
+        return csprPrice; // Fallback to CSPR price if rate unavailable
+      }
     }
   } catch (error) {
     console.error('Failed to get collateral price:', error);
-    return BigInt('20000000000000000');
+    return DEFAULT_PRICE;
   }
 }
 
