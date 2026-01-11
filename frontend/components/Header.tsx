@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -7,6 +8,12 @@ import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { CASPER_TESTNET, SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
+import {
+  getAccountCsprBalance,
+  getLstBalance,
+  getGusdBalance,
+  formatCsprAmount,
+} from '@/lib/casperRpc';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
@@ -15,15 +22,59 @@ const NAV_ITEMS = [
   { href: '/redeem', label: 'Redeem' },
 ];
 
+interface Balances {
+  cspr: bigint | null;
+  scspr: bigint | null;
+  gusd: bigint | null;
+}
+
 export function Header() {
   const pathname = usePathname();
   const { isInstalled, isConnected, publicKey, isBusy, connect, disconnect } = useCasperWallet();
+
+  const [balances, setBalances] = useState<Balances>({
+    cspr: null,
+    scspr: null,
+    gusd: null,
+  });
+  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
+
+  // Fetch balances when connected
+  const fetchBalances = useCallback(async () => {
+    if (!isConnected || !publicKey) {
+      setBalances({ cspr: null, scspr: null, gusd: null });
+      return;
+    }
+
+    setIsLoadingBalances(true);
+    try {
+      const [csprBalance, lstBalance, gusdBalance] = await Promise.all([
+        getAccountCsprBalance(publicKey),
+        getLstBalance(publicKey),
+        getGusdBalance(publicKey),
+      ]);
+
+      setBalances({
+        cspr: csprBalance,
+        scspr: lstBalance?.scsprBalance ?? null,
+        gusd: gusdBalance,
+      });
+    } catch (err) {
+      console.error('Failed to fetch balances:', err);
+    } finally {
+      setIsLoadingBalances(false);
+    }
+  }, [isConnected, publicKey]);
+
+  useEffect(() => {
+    void fetchBalances();
+  }, [fetchBalances]);
 
   const buttonLabel = !isInstalled
     ? 'Casper Wallet required'
     : isConnected
       ? 'Disconnect'
-      : 'Connect Casper Wallet';
+      : 'Connect Wallet';
 
   const onClick = async () => {
     if (!isInstalled) return;
@@ -71,12 +122,47 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
-            <div className="hidden sm:flex flex-col text-right">
-              <span className="text-xs text-gray-500">Connected</span>
-              <span className="text-sm font-medium text-gray-900">{shortenPublicKey(publicKey, 8)}</span>
+            <div className="hidden md:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
+              {/* Balances */}
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-gray-600">
+                  <span className="font-medium text-gray-900">
+                    {isLoadingBalances ? '...' : formatCsprAmount(balances.cspr ?? BigInt(0))}
+                  </span>
+                  {' '}CSPR
+                </span>
+                <span className="text-gray-300">|</span>
+                <span className="text-gray-600">
+                  <span className="font-medium text-gray-900">
+                    {isLoadingBalances ? '...' : formatCsprAmount(balances.scspr ?? BigInt(0))}
+                  </span>
+                  {' '}stCSPR
+                </span>
+                <span className="text-gray-300">|</span>
+                <span className="text-gray-600">
+                  <span className="font-medium text-gray-900">
+                    {isLoadingBalances ? '...' : formatCsprAmount(balances.gusd ?? BigInt(0))}
+                  </span>
+                  {' '}gUSD
+                </span>
+              </div>
+              <span className="text-gray-300">|</span>
+              {/* Address */}
+              <span className="text-sm font-medium text-gray-900">
+                {shortenPublicKey(publicKey, 6)}
+              </span>
             </div>
           )}
+
+          {/* Mobile: Just show address */}
+          {isConnected && publicKey && (
+            <div className="md:hidden flex flex-col text-right">
+              <span className="text-sm font-medium text-gray-900">{shortenPublicKey(publicKey, 6)}</span>
+            </div>
+          )}
+
           <Button variant={isConnected ? 'secondary' : 'primary'} size="sm" isLoading={isBusy} onClick={onClick}>
             {buttonLabel}
           </Button>

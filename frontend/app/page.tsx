@@ -2,8 +2,6 @@
 
 import { useState } from 'react';
 import { Header } from '@/components/Header';
-import { WalletCard } from '@/components/WalletCard';
-import { NetworkCard } from '@/components/NetworkCard';
 import { CdpVaultCard } from '@/components/CdpVaultCard';
 import { CdpOpenVaultCard } from '@/components/CdpOpenVaultCard';
 import { CdpStatsCard } from '@/components/CdpStatsCard';
@@ -38,14 +36,8 @@ export default function Home() {
       <Header />
 
       <main className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-10">
-        {/* Top Cards */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <WalletCard />
-          <NetworkCard />
-        </div>
-
         {/* Collateral Type Tabs */}
-        <div className="mt-8 flex justify-center">
+        <div className="flex justify-center">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
             <button
               onClick={() => setActiveCollateral('cspr')}
