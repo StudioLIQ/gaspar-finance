@@ -59,6 +59,7 @@ Deployment records are saved to `deployments/casper/<network>-<timestamp>.json`.
 - [Deployment](./runbook-deployment.md) - Full deployment procedure
 - [LST Rate Sync](./runbook-styks-oracle.md) - Oracle and rate keeper operations
 - [Collateral Onboarding](./runbook-collateral-onboarding.md) - Adding new collateral types
+- [SP + Redemption E2E](./runbook-sp-redemption-e2e.md) - StabilityPool and Redemption testing
 
 ## Related Documentation
 

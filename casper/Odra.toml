@@ -1,0 +1,47 @@
+[project]
+name = "cspr_cdp"
+source = "contracts/src"
+
+[[contracts]]
+name = "registry"
+fqn = "cspr_cdp_contracts::registry::Registry"
+
+[[contracts]]
+name = "router"
+fqn = "cspr_cdp_contracts::router::Router"
+
+[[contracts]]
+name = "branch_cspr"
+fqn = "cspr_cdp_contracts::branch_cspr::BranchCspr"
+
+[[contracts]]
+name = "branch_scspr"
+fqn = "cspr_cdp_contracts::branch_scspr::BranchScspr"
+
+[[contracts]]
+name = "stablecoin"
+fqn = "cspr_cdp_contracts::stablecoin::Stablecoin"
+
+[[contracts]]
+name = "treasury"
+fqn = "cspr_cdp_contracts::treasury::Treasury"
+
+[[contracts]]
+name = "mock_oracle"
+fqn = "cspr_cdp_contracts::mock_oracle::MockOracle"
+
+[[contracts]]
+name = "stability_pool"
+fqn = "cspr_cdp_contracts::stability_pool::StabilityPool"
+
+[[contracts]]
+name = "liquidation_engine"
+fqn = "cspr_cdp_contracts::liquidation_engine::LiquidationEngine"
+
+[[contracts]]
+name = "redemption_engine"
+fqn = "cspr_cdp_contracts::redemption_engine::RedemptionEngine"
+
+[[contracts]]
+name = "token_adapter"
+fqn = "cspr_cdp_contracts::token_adapter::TokenAdapter"

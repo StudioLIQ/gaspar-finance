@@ -9,7 +9,13 @@ import {
   getDeployStatus,
   type DeployArg,
 } from '@/lib/casperDeploy';
-import { formatCsprAmount, parseCsprInput } from '@/lib/casperRpc';
+import {
+  formatCsprAmount,
+  parseCsprInput,
+  getRedemptionStats,
+  getGusdBalance,
+  formatGusdAmount,
+} from '@/lib/casperRpc';
 
 // Refresh interval for polling data
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
@@ -107,17 +113,8 @@ export function useRedemption(): RedemptionState & RedemptionActions {
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  // Format gUSD (18 decimals)
-  const formatGusd = (amount: bigint): string => {
-    const scale = BigInt('1000000000000000000'); // 1e18
-    const whole = amount / scale;
-    const frac = amount % scale;
-    const fracStr = frac.toString().padStart(18, '0').slice(0, 2);
-    return `${whole.toLocaleString()}.${fracStr}`;
-  };
-
   // Computed
-  const userGusdBalanceFormatted = userGusdBalance !== null ? formatGusd(userGusdBalance) : null;
+  const userGusdBalanceFormatted = userGusdBalance !== null ? formatGusdAmount(userGusdBalance) : null;
 
   // Refresh all data
   const refresh = useCallback(async () => {
@@ -129,21 +126,32 @@ export function useRedemption(): RedemptionState & RedemptionActions {
     setIsRefreshing(true);
 
     try {
-      // Fetch redemption stats
-      // Placeholder: In production, query contract named keys
-      const mockStats: RedemptionStats = {
-        baseFeeBps: PROTOCOL_PARAMS.REDEMPTION_BASE_FEE_BPS,
-        totalRedeemed: BigInt('500000000000000000000000'), // 500k gUSD
-        totalRedeemedFormatted: '500,000.00',
-        totalCollateralDistributed: BigInt('250000000000000'), // 250k CSPR
-        isSafeModeActive: false,
-      };
-      setStats(mockStats);
+      // Fetch redemption stats from chain
+      const chainStats = await getRedemptionStats();
+      if (chainStats) {
+        const statsData: RedemptionStats = {
+          baseFeeBps: chainStats.baseFee,
+          totalRedeemed: chainStats.totalRedeemed,
+          totalRedeemedFormatted: chainStats.totalRedeemedFormatted,
+          totalCollateralDistributed: chainStats.totalCollateralDistributed,
+          isSafeModeActive: chainStats.isSafeModeActive,
+        };
+        setStats(statsData);
+      } else {
+        // Fallback to defaults if query fails
+        setStats({
+          baseFeeBps: PROTOCOL_PARAMS.REDEMPTION_BASE_FEE_BPS,
+          totalRedeemed: BigInt(0),
+          totalRedeemedFormatted: '0',
+          totalCollateralDistributed: BigInt(0),
+          isSafeModeActive: false,
+        });
+      }
 
       // Fetch user gUSD balance if connected
       if (isConnected && publicKey) {
-        // Placeholder: Query user's gUSD balance
-        setUserGusdBalance(BigInt('10000000000000000000000')); // 10,000 gUSD
+        const gusdBal = await getGusdBalance(publicKey);
+        setUserGusdBalance(gusdBal);
       } else {
         setUserGusdBalance(null);
       }
@@ -201,7 +209,7 @@ export function useRedemption(): RedemptionState & RedemptionActions {
 
       return {
         gusdAmount: gusdMotes,
-        gusdFormatted: formatGusd(gusdMotes),
+        gusdFormatted: formatGusdAmount(gusdMotes),
         collateralAmount: collateralAfterFee,
         collateralFormatted: formatCsprAmount(collateralAfterFee),
         feeAmount,

@@ -14,7 +14,8 @@
 //! - Withdrawals: BLOCKED when safe_mode is active
 
 use odra::prelude::*;
-use odra::casper_types::{U256, U512};
+use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
+use odra::CallDef;
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
 
@@ -222,10 +223,17 @@ impl StabilityPool {
         self.total_deposits.set(total + amount);
 
         // Transfer gUSD from depositor to pool
-        // TODO: Wire cross-contract call to gUSD.transfer_from()
-        // Placeholder: assume transfer succeeds
-        let _stablecoin_addr = self.stablecoin.get();
-        let _ = pool_address; // suppress unused warning
+        let stablecoin_addr = self.stablecoin.get().expect("stablecoin not set");
+        let args = runtime_args! {
+            "owner" => depositor,
+            "recipient" => pool_address,
+            "amount" => amount
+        };
+        let call_def = CallDef::new("transfer_from", true, args);
+        let success: bool = self.env().call_contract(stablecoin_addr, call_def);
+        if !success {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
 
         // Transfer pending collateral gains to depositor
         self.transfer_gains_internal(depositor, gains);
@@ -276,9 +284,16 @@ impl StabilityPool {
         }
 
         // Transfer gUSD from pool to depositor
-        // TODO: Wire cross-contract call to gUSD.transfer()
-        // Placeholder: assume transfer succeeds
-        let _stablecoin_addr = self.stablecoin.get();
+        let stablecoin_addr = self.stablecoin.get().expect("stablecoin not set");
+        let args = runtime_args! {
+            "recipient" => depositor,
+            "amount" => amount
+        };
+        let call_def = CallDef::new("transfer", true, args);
+        let success: bool = self.env().call_contract(stablecoin_addr, call_def);
+        if !success {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
 
         // Transfer pending collateral gains to depositor
         self.transfer_gains_internal(depositor, gains);
@@ -380,7 +395,7 @@ impl StabilityPool {
         self.offset(coll_id, debt_to_offset, collateral_to_add)
     }
 
-    /// Receive collateral during liquidation offset (payable for CSPR)
+    /// Receive CSPR collateral during liquidation offset (payable)
     #[odra(payable)]
     pub fn receive_cspr_collateral(&mut self) {
         self.require_authorized_liquidator();
@@ -390,6 +405,34 @@ impl StabilityPool {
 
         let current = self.total_cspr_collateral.get().unwrap_or(U256::zero());
         self.total_cspr_collateral.set(current + amount);
+    }
+
+    /// Receive stCSPR collateral during liquidation offset.
+    /// Called by LiquidationEngine after it has approved the pool to pull stCSPR.
+    pub fn receive_scspr_collateral(&mut self, from: Address, amount: U256) {
+        self.require_authorized_liquidator();
+
+        if amount.is_zero() {
+            return;
+        }
+
+        let scspr_addr = self.scspr_token.get().expect("scspr_token not set");
+        let pool_address = self.env().self_address();
+
+        // Pull stCSPR from the source address
+        let args = runtime_args! {
+            "owner" => from,
+            "recipient" => pool_address,
+            "amount" => amount
+        };
+        let call_def = CallDef::new("transfer_from", true, args);
+        let success: bool = self.env().call_contract(scspr_addr, call_def);
+        if !success {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
+
+        let current = self.total_scspr_collateral.get().unwrap_or(U256::zero());
+        self.total_scspr_collateral.set(current + amount);
     }
 
     // ========== Query Functions ==========
@@ -492,6 +535,51 @@ impl StabilityPool {
         self.total_deposits.get().unwrap_or(U256::zero())
     }
 
+    /// Get total CSPR collateral in pool
+    pub fn get_total_cspr_collateral(&self) -> U256 {
+        self.total_cspr_collateral.get().unwrap_or(U256::zero())
+    }
+
+    /// Get total stCSPR collateral in pool
+    pub fn get_total_scspr_collateral(&self) -> U256 {
+        self.total_scspr_collateral.get().unwrap_or(U256::zero())
+    }
+
+    /// Get total debt absorbed by pool
+    pub fn get_total_debt_absorbed(&self) -> U256 {
+        self.total_debt_absorbed.get().unwrap_or(U256::zero())
+    }
+
+    /// Get depositor count
+    pub fn get_depositor_count(&self) -> u64 {
+        self.depositor_count.get().unwrap_or(0)
+    }
+
+    // ========== Frontend-Friendly User State Access ==========
+
+    /// Get user's current deposit (primitive return for frontend)
+    pub fn get_user_deposit(&self, depositor: Address) -> U256 {
+        self.get_compounded_deposit(depositor)
+    }
+
+    /// Get user's pending CSPR gains (primitive return for frontend)
+    pub fn get_user_cspr_gains(&self, depositor: Address) -> U256 {
+        self.get_depositor_gains(depositor).cspr_gain
+    }
+
+    /// Get user's pending stCSPR gains (primitive return for frontend)
+    pub fn get_user_scspr_gains(&self, depositor: Address) -> U256 {
+        self.get_depositor_gains(depositor).scspr_gain
+    }
+
+    /// Get user's full state in a single call (deposit, cspr_gains, scspr_gains)
+    /// Returns (deposit, cspr_gains, scspr_gains) as tuple of U256
+    pub fn get_user_state(&self, depositor: Address) -> (U256, U256, U256) {
+        let deposit = self.get_compounded_deposit(depositor);
+        let gains = self.get_depositor_gains(depositor);
+        (deposit, gains.cspr_gain, gains.scspr_gain)
+    }
+
     /// Get registry address
     pub fn get_registry(&self) -> Option<Address> {
         self.registry.get()
@@ -585,14 +673,22 @@ impl StabilityPool {
         }
 
         // Transfer stCSPR gains (CEP-18 transfer)
-        // TODO: Wire cross-contract call to stCSPR.transfer()
-        // Placeholder: just update accounting
         if !gains.scspr_gain.is_zero() {
             let current_scspr = self.total_scspr_collateral.get().unwrap_or(U256::zero());
             if gains.scspr_gain <= current_scspr {
                 self.total_scspr_collateral.set(current_scspr - gains.scspr_gain);
-                let _scspr_addr = self.scspr_token.get();
-                let _ = recipient; // suppress unused warning
+
+                if let Some(scspr_addr) = self.scspr_token.get() {
+                    let args = runtime_args! {
+                        "recipient" => recipient,
+                        "amount" => gains.scspr_gain
+                    };
+                    let call_def = CallDef::new("transfer", true, args);
+                    let success: bool = self.env().call_contract(scspr_addr, call_def);
+                    if !success {
+                        self.env().revert(CdpError::InsufficientTokenBalance);
+                    }
+                }
             }
         }
     }

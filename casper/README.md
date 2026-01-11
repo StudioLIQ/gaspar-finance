@@ -113,16 +113,19 @@ Deployment records are saved to `deployments/casper/<network>-<date>.json`.
 
 | Module | Description | Status |
 |--------|-------------|--------|
-| Router | Collateral type dispatch | Pending |
-| BranchCSPR | CSPR vault logic | Pending |
-| BranchSCSPR | stCSPR vault logic | Pending |
-| gUSD | Stablecoin (mint/burn) | Pending |
-| Treasury | Fee collection | Pending |
-| OracleAdapter | Styks/Odra pricing | Pending |
-| StabilityPool | Bad debt absorption | Pending |
-| LiquidationEngine | Vault liquidation | Pending |
-| RedemptionEngine | gUSD redemption | Pending |
-| AccessControl | Role management | Pending |
+| Router | Collateral type dispatch | Scaffolded (cross-contract wiring WIP) |
+| BranchCSPR | CSPR vault logic | Scaffolded (CSPR transfers WIP) |
+| BranchSCSPR | stCSPR vault logic | Scaffolded (CEP-18 transfers WIP) |
+| gUSD | Stablecoin (mint/burn) | Scaffolded (registry/admin gating WIP) |
+| Treasury | Fee collection | Scaffolded (token transfers WIP) |
+| OracleAdapter | Styks/Odra pricing | Scaffolded (external feed + router wiring WIP) |
+| StabilityPool | Bad debt absorption | Scaffolded (token transfers + liquidation wiring WIP) |
+| LiquidationEngine | Vault liquidation | Scaffolded (oracle/branch wiring WIP) |
+| RedemptionEngine | gUSD redemption | Scaffolded (vault iteration + transfers WIP) |
+| TokenAdapter | CEP-18 adapter | Scaffolded (cross-contract calls WIP) |
+| AccessControl | Role management | Implemented (governance module scaffold included) |
+| scsprYbToken | LST ybToken | Implemented (testnet preview) |
+| WithdrawQueue | LST withdraw queue | Implemented (testnet preview) |
 
 ## Safe Mode (Circuit Breaker)
 

@@ -1,0 +1,45 @@
+[project]
+name = "cspr_cdp_contracts"
+source = "src"
+
+[[contracts]]
+fqn = "registry::Registry"
+
+[[contracts]]
+fqn = "router::Router"
+
+[[contracts]]
+fqn = "branch_cspr::BranchCspr"
+
+[[contracts]]
+fqn = "branch_scspr::BranchScspr"
+
+[[contracts]]
+fqn = "stablecoin::Stablecoin"
+
+[[contracts]]
+fqn = "treasury::Treasury"
+
+[[contracts]]
+fqn = "oracle_adapter::OracleAdapter"
+
+[[contracts]]
+fqn = "stability_pool::StabilityPool"
+
+[[contracts]]
+fqn = "liquidation_engine::LiquidationEngine"
+
+[[contracts]]
+fqn = "redemption_engine::RedemptionEngine"
+
+[[contracts]]
+fqn = "token_adapter::TokenAdapter"
+
+[[contracts]]
+fqn = "access_control::AccessControl"
+
+[[contracts]]
+fqn = "scspr_ybtoken::ScsprYbToken"
+
+[[contracts]]
+fqn = "withdraw_queue::WithdrawQueue"

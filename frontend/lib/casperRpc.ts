@@ -607,3 +607,218 @@ export function convertCsprToShares(csprMotes: bigint, rate: bigint): bigint {
 export function convertSharesToCspr(shares: bigint, rate: bigint): bigint {
   return (shares * rate) / RATE_SCALE;
 }
+
+// ========== StabilityPool Queries ==========
+
+export interface StabilityPoolUserState {
+  deposit: bigint;
+  depositFormatted: string;
+  csprGains: bigint;
+  csprGainsFormatted: string;
+  scsprGains: bigint;
+  scsprGainsFormatted: string;
+}
+
+export interface StabilityPoolProtocolStats {
+  totalDeposits: bigint;
+  totalDepositsFormatted: string;
+  totalCsprCollateral: bigint;
+  totalScsprCollateral: bigint;
+  totalDebtAbsorbed: bigint;
+  depositorCount: number;
+  isSafeModeActive: boolean;
+}
+
+// Get user's stability pool state (deposit + gains)
+export async function getStabilityPoolUserState(
+  publicKey: string
+): Promise<StabilityPoolUserState | null> {
+  const spHash = CONTRACTS.stabilityPool;
+  if (!spHash || spHash === 'null') {
+    return null;
+  }
+
+  try {
+    const accountHash = await getAccountHash(publicKey);
+    if (!accountHash) {
+      return null;
+    }
+
+    // Query user deposit from dictionary
+    const depositData = await queryContractDictionary(spHash, 'deposits', accountHash);
+
+    let deposit = BigInt(0);
+    let csprGains = BigInt(0);
+    let scsprGains = BigInt(0);
+
+    if (depositData && typeof depositData === 'object') {
+      const snapshot = depositData as Record<string, unknown>;
+      deposit = BigInt(String(snapshot.deposit ?? '0'));
+      // Note: Gains require product-sum calculation which is complex
+      // For now, we read from the snapshot but the actual gains require on-chain computation
+      // The contract has get_user_cspr_gains and get_user_scspr_gains entrypoints
+    }
+
+    return {
+      deposit,
+      depositFormatted: formatGusdAmount(deposit),
+      csprGains,
+      csprGainsFormatted: formatCsprAmount(csprGains),
+      scsprGains,
+      scsprGainsFormatted: formatCsprAmount(scsprGains),
+    };
+  } catch (error) {
+    console.error('Failed to get StabilityPool user state:', error);
+    return null;
+  }
+}
+
+// Get stability pool protocol stats
+export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStats | null> {
+  const spHash = CONTRACTS.stabilityPool;
+  if (!spHash || spHash === 'null') {
+    return null;
+  }
+
+  try {
+    const totalDepositsRaw = await queryContractNamedKey(spHash, 'total_deposits');
+    const totalDeposits = BigInt(String(totalDepositsRaw ?? '0'));
+
+    const totalCsprRaw = await queryContractNamedKey(spHash, 'total_cspr_collateral');
+    const totalCsprCollateral = BigInt(String(totalCsprRaw ?? '0'));
+
+    const totalScsprRaw = await queryContractNamedKey(spHash, 'total_scspr_collateral');
+    const totalScsprCollateral = BigInt(String(totalScsprRaw ?? '0'));
+
+    const totalDebtRaw = await queryContractNamedKey(spHash, 'total_debt_absorbed');
+    const totalDebtAbsorbed = BigInt(String(totalDebtRaw ?? '0'));
+
+    const countRaw = await queryContractNamedKey(spHash, 'depositor_count');
+    const depositorCount = Number(countRaw ?? 0);
+
+    const safeModeRaw = await queryContractNamedKey(spHash, 'safe_mode');
+    let isSafeModeActive = false;
+    if (safeModeRaw && typeof safeModeRaw === 'object') {
+      const sm = safeModeRaw as Record<string, unknown>;
+      isSafeModeActive = Boolean(sm.is_active);
+    }
+
+    return {
+      totalDeposits,
+      totalDepositsFormatted: formatGusdAmount(totalDeposits),
+      totalCsprCollateral,
+      totalScsprCollateral,
+      totalDebtAbsorbed,
+      depositorCount,
+      isSafeModeActive,
+    };
+  } catch (error) {
+    console.error('Failed to get StabilityPool stats:', error);
+    return null;
+  }
+}
+
+// ========== Redemption Queries ==========
+
+export interface RedemptionProtocolStats {
+  totalRedeemed: bigint;
+  totalRedeemedFormatted: string;
+  totalCollateralDistributed: bigint;
+  totalFeesCollected: bigint;
+  baseFee: number;
+  maxFee: number;
+  currentFee: number;
+  isSafeModeActive: boolean;
+}
+
+// Get redemption protocol stats
+export async function getRedemptionStats(): Promise<RedemptionProtocolStats | null> {
+  const reHash = CONTRACTS.redemptionEngine;
+  if (!reHash || reHash === 'null') {
+    return null;
+  }
+
+  try {
+    const totalRedeemedRaw = await queryContractNamedKey(reHash, 'total_redeemed');
+    const totalRedeemed = BigInt(String(totalRedeemedRaw ?? '0'));
+
+    const totalDistributedRaw = await queryContractNamedKey(reHash, 'total_collateral_distributed');
+    const totalCollateralDistributed = BigInt(String(totalDistributedRaw ?? '0'));
+
+    const totalFeesRaw = await queryContractNamedKey(reHash, 'total_fees_collected');
+    const totalFeesCollected = BigInt(String(totalFeesRaw ?? '0'));
+
+    const baseFeeRaw = await queryContractNamedKey(reHash, 'base_fee_bps');
+    const baseFee = Number(baseFeeRaw ?? 50);
+
+    const maxFeeRaw = await queryContractNamedKey(reHash, 'max_fee_bps');
+    const maxFee = Number(maxFeeRaw ?? 500);
+
+    // Current fee is dynamic but starts at base fee
+    const currentFee = baseFee;
+
+    const safeModeRaw = await queryContractNamedKey(reHash, 'safe_mode');
+    let isSafeModeActive = false;
+    if (safeModeRaw && typeof safeModeRaw === 'object') {
+      const sm = safeModeRaw as Record<string, unknown>;
+      isSafeModeActive = Boolean(sm.is_active);
+    }
+
+    return {
+      totalRedeemed,
+      totalRedeemedFormatted: formatGusdAmount(totalRedeemed),
+      totalCollateralDistributed,
+      totalFeesCollected,
+      baseFee,
+      maxFee,
+      currentFee,
+      isSafeModeActive,
+    };
+  } catch (error) {
+    console.error('Failed to get Redemption stats:', error);
+    return null;
+  }
+}
+
+// ========== gUSD Balance Query ==========
+
+// Get user's gUSD balance from stablecoin contract
+export async function getGusdBalance(publicKey: string): Promise<bigint> {
+  const gusdHash = CONTRACTS.stablecoin;
+  if (!gusdHash || gusdHash === 'null') {
+    return BigInt(0);
+  }
+
+  try {
+    const accountHash = await getAccountHash(publicKey);
+    if (!accountHash) {
+      return BigInt(0);
+    }
+
+    const balance = await queryContractDictionary(gusdHash, 'balances', accountHash);
+    if (balance !== null) {
+      return BigInt(String(balance));
+    }
+    return BigInt(0);
+  } catch (error) {
+    console.error('Failed to get gUSD balance:', error);
+    return BigInt(0);
+  }
+}
+
+// Format gUSD amount (18 decimals)
+export function formatGusdAmount(amount: bigint, decimals: number = 2): string {
+  const divisor = BigInt(10 ** 18);
+  const wholePart = amount / divisor;
+  const fractionalPart = amount % divisor;
+
+  const fractionalStr = fractionalPart.toString().padStart(18, '0');
+  const truncatedFractional = fractionalStr.slice(0, decimals);
+
+  if (decimals === 0 || truncatedFractional === '0'.repeat(decimals)) {
+    return wholePart.toLocaleString();
+  }
+
+  const trimmedFractional = truncatedFractional.replace(/0+$/, '');
+  return `${wholePart.toLocaleString()}.${trimmedFractional || '0'}`;
+}

@@ -8,10 +8,27 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-odra = { workspace = true }
+odra = { version = "2.4.0", default-features = false }
 
 [dev-dependencies]
+odra-test = { version = "2.4.0", default-features = false }
 odra-casper-test-vm = { workspace = true }
+
+[build-dependencies]
+odra-build = { version = "2.4.0", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+odra-build = { version = "2.4.0", default-features = false }
+
+[[bin]]
+name = "cspr_cdp_contracts_build_contract"
+path = "bin/build_contract.rs"
+test = false
+
+[[bin]]
+name = "cspr_cdp_contracts_build_schema"
+path = "bin/build_schema.rs"
+test = false
 
 [features]
 default = []

@@ -12,7 +12,8 @@
 //! 6. Close or reduce the vault
 
 use odra::prelude::*;
-use odra::casper_types::{U256, U512};
+use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
+use odra::CallDef;
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
 
@@ -289,6 +290,9 @@ impl LiquidationEngine {
                 price,
             );
 
+            // Execute the liquidation
+            self.execute_liquidation(collateral_id, &result);
+
             vaults_liquidated += 1;
             total_debt = total_debt + result.debt_liquidated;
             total_collateral = total_collateral + result.collateral_seized;
@@ -398,31 +402,40 @@ impl LiquidationEngine {
 
     fn get_vault_data(&self, collateral_id: CollateralId, owner: Address) -> VaultDataSimple {
         let branch_addr = match collateral_id {
-            CollateralId::Cspr => self.branch_cspr.get(),
-            CollateralId::SCSPR => self.branch_scspr.get(),
+            CollateralId::Cspr => self.branch_cspr.get().expect("branch_cspr not set"),
+            CollateralId::SCSPR => self.branch_scspr.get().expect("branch_scspr not set"),
         };
 
-        // Placeholder: Cross-contract call to branch.get_collateral/get_debt
-        // TODO: Wire cross-contract calls when Odra external_contract is available
-        let _ = branch_addr;
-        let _ = owner;
-        VaultDataSimple {
-            collateral: U256::zero(),
-            debt: U256::zero(),
-        }
+        // Get collateral from branch
+        let get_coll_args = runtime_args! {
+            "owner" => owner
+        };
+        let get_coll_call = CallDef::new("get_collateral", false, get_coll_args);
+        let collateral: U256 = self.env().call_contract(branch_addr, get_coll_call);
+
+        // Get debt from branch
+        let get_debt_args = runtime_args! {
+            "owner" => owner
+        };
+        let get_debt_call = CallDef::new("get_debt", false, get_debt_args);
+        let debt: U256 = self.env().call_contract(branch_addr, get_debt_call);
+
+        VaultDataSimple { collateral, debt }
     }
 
     fn get_price(&self, collateral_id: CollateralId) -> U256 {
-        let _oracle_addr = self.oracle.get();
-        let _coll_id: u8 = match collateral_id {
+        let oracle_addr = self.oracle.get().expect("oracle not set");
+        let coll_id: u8 = match collateral_id {
             CollateralId::Cspr => 0,
             CollateralId::SCSPR => 1,
         };
 
-        // Placeholder: Cross-contract call to oracle.get_price()
-        // TODO: Wire cross-contract call when Odra external_contract is available
-        // For now, return $1.00 price (1e18)
-        U256::from(SCALE)
+        // Cross-contract call to oracle.get_price()
+        let args = runtime_args! {
+            "collateral_id" => coll_id
+        };
+        let call_def = CallDef::new("get_price", false, args);
+        self.env().call_contract::<U256>(oracle_addr, call_def)
     }
 
     fn execute_liquidation(&mut self, collateral_id: CollateralId, result: &LiquidationResult) {
@@ -430,52 +443,96 @@ impl LiquidationEngine {
 
         // 1. Get branch address
         let branch_addr = match collateral_id {
-            CollateralId::Cspr => self.branch_cspr.get(),
-            CollateralId::SCSPR => self.branch_scspr.get(),
+            CollateralId::Cspr => self.branch_cspr.get().expect("branch_cspr not set"),
+            CollateralId::SCSPR => self.branch_scspr.get().expect("branch_scspr not set"),
         };
 
-        if branch_addr.is_none() {
-            self.env().revert(CdpError::InvalidConfig);
-        }
-        let _branch_addr = branch_addr.unwrap();
-
         // 2. Seize collateral from vault (branch updates its accounting)
-        // TODO: Wire cross-contract call to branch.seize_collateral()
-        // Placeholder: assume success
+        let seize_args = runtime_args! {
+            "owner" => result.vault_owner,
+            "amount" => result.collateral_seized
+        };
+        let seize_call = CallDef::new("seize_collateral", true, seize_args);
+        self.env().call_contract::<()>(branch_addr, seize_call);
 
-        // 3. Offset debt with stability pool
-        // TODO: Wire cross-contract calls to SP and branch
-        // Placeholder: just do native CSPR transfers where possible
+        // 3. Reduce vault debt
+        let reduce_debt_args = runtime_args! {
+            "owner" => result.vault_owner,
+            "amount" => result.debt_liquidated
+        };
+        let reduce_debt_call = CallDef::new("reduce_debt", true, reduce_debt_args);
+        self.env().call_contract::<()>(branch_addr, reduce_debt_call);
+
+        // 4. Offset debt with stability pool
         if !result.debt_liquidated.is_zero() {
             if let Some(sp_addr) = self.stability_pool.get() {
-                // Transfer collateral to SP based on type (CSPR only for now)
+                let coll_id: u8 = match collateral_id {
+                    CollateralId::Cspr => 0,
+                    CollateralId::SCSPR => 1,
+                };
+
+                // Call SP offset to record the debt absorption
+                let offset_args = runtime_args! {
+                    "collateral_id" => coll_id,
+                    "debt_to_offset" => result.debt_liquidated,
+                    "collateral_to_add" => result.collateral_to_sp
+                };
+                let offset_call = CallDef::new("offset_u8", true, offset_args);
+                let _offset_result: U256 = self.env().call_contract(sp_addr, offset_call);
+
+                // Transfer collateral to SP
                 if !result.collateral_to_sp.is_zero() {
-                    if matches!(collateral_id, CollateralId::Cspr) {
-                        // Native CSPR transfer to SP
-                        self.env().transfer_tokens(&sp_addr, &u256_to_u512(result.collateral_to_sp));
+                    match collateral_id {
+                        CollateralId::Cspr => {
+                            // Native CSPR transfer to SP via receive_cspr_collateral
+                            self.env().transfer_tokens(&sp_addr, &u256_to_u512(result.collateral_to_sp));
+                        }
+                        CollateralId::SCSPR => {
+                            // For stCSPR, approve and call receive_scspr_collateral
+                            // The liquidation engine holds the stCSPR after seizing it
+                            // SP will pull the stCSPR from the source
+                            let engine_addr = self.env().self_address();
+                            let receive_args = runtime_args! {
+                                "from" => engine_addr,
+                                "amount" => result.collateral_to_sp
+                            };
+                            let receive_call = CallDef::new("receive_scspr_collateral", true, receive_args);
+                            self.env().call_contract::<()>(sp_addr, receive_call);
+                        }
                     }
-                    // stCSPR transfer needs cross-contract call - placeholder
-                    let _scspr_addr = self.scspr_token.get();
                 }
             }
         }
 
-        // 4. Transfer gas compensation to liquidator
+        // 5. Transfer gas compensation to liquidator
         if !result.collateral_to_liquidator.is_zero() {
             match collateral_id {
                 CollateralId::Cspr => {
                     self.env().transfer_tokens(&liquidator, &u256_to_u512(result.collateral_to_liquidator));
                 }
                 CollateralId::SCSPR => {
-                    // TODO: Wire cross-contract call to stCSPR.transfer()
-                    let _scspr_addr = self.scspr_token.get();
+                    let scspr_addr = self.scspr_token.get().expect("scspr_token not set");
+                    let transfer_args = runtime_args! {
+                        "recipient" => liquidator,
+                        "amount" => result.collateral_to_liquidator
+                    };
+                    let transfer_call = CallDef::new("transfer", true, transfer_args);
+                    let success: bool = self.env().call_contract(scspr_addr, transfer_call);
+                    if !success {
+                        self.env().revert(CdpError::InsufficientTokenBalance);
+                    }
                 }
             }
         }
 
-        // 5. Close vault if fully liquidated
-        // TODO: Wire cross-contract call to branch.close_vault()
-        let _ = result.fully_liquidated;
+        // 6. Close vault if fully liquidated
+        if result.fully_liquidated {
+            let close_args = runtime_args! {
+                "owner" => result.vault_owner
+            };
+            let close_call = CallDef::new("close_vault_for_liquidation", true, close_args);
+            self.env().call_contract::<()>(branch_addr, close_call);
+        }
     }
 
     fn calculate_collateral_value(&self, collateral: U256, price: U256) -> U256 {

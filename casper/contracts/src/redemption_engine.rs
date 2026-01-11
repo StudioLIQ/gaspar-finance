@@ -13,7 +13,8 @@
 //! - Redemptions: BLOCKED when safe_mode is active
 
 use odra::prelude::*;
-use odra::casper_types::{U256, U512};
+use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
+use odra::CallDef;
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
 
@@ -253,12 +254,19 @@ impl RedemptionEngine {
         );
 
         // Burn gUSD from redeemer (requires approval)
-        // Placeholder: Cross-contract call to gUSD.burn_with_allowance()
-        // TODO: Wire cross-contract call when Odra external_contract is available
-        let _stablecoin_addr = self.stablecoin.get();
-        let _redeemer = redeemer;
-        let _amount = csprusd_amount;
-        // gusd.burn_with_allowance(redeemer, csprusd_amount);
+        // Using transfer_from to burn address (zero address not supported, use treasury as burn sink)
+        let stablecoin_addr = self.stablecoin.get().expect("stablecoin not set");
+        let treasury_addr = self.treasury.get().expect("treasury not set");
+        let burn_args = runtime_args! {
+            "owner" => redeemer,
+            "recipient" => treasury_addr,
+            "amount" => csprusd_amount
+        };
+        let burn_call = CallDef::new("transfer_from", true, burn_args);
+        let burn_success: bool = self.env().call_contract(stablecoin_addr, burn_call);
+        if !burn_success {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
 
         // Transfer collateral to redeemer
         self.transfer_collateral(collateral_id, redeemer, collateral_after_fee);
@@ -383,6 +391,23 @@ impl RedemptionEngine {
         self.max_fee_bps.get().unwrap_or(MAX_REDEMPTION_FEE_BPS)
     }
 
+    // ========== Frontend-Friendly State Access ==========
+
+    /// Get total gUSD redeemed (primitive return for frontend)
+    pub fn get_total_redeemed(&self) -> U256 {
+        self.total_redeemed.get().unwrap_or(U256::zero())
+    }
+
+    /// Get total collateral distributed (primitive return for frontend)
+    pub fn get_total_collateral_distributed(&self) -> U256 {
+        self.total_collateral_distributed.get().unwrap_or(U256::zero())
+    }
+
+    /// Get total fees collected (primitive return for frontend)
+    pub fn get_total_fees_collected(&self) -> U256 {
+        self.total_fees_collected.get().unwrap_or(U256::zero())
+    }
+
     /// Get registry address
     pub fn get_registry(&self) -> Option<Address> {
         self.registry.get()
@@ -454,52 +479,122 @@ impl RedemptionEngine {
     }
 
     fn get_price(&self, collateral_id: CollateralId) -> U256 {
-        let _oracle_addr = self.oracle.get();
-        let _coll_id: u8 = match collateral_id {
+        let oracle_addr = self.oracle.get().expect("oracle not set");
+        let coll_id: u8 = match collateral_id {
             CollateralId::Cspr => 0,
             CollateralId::SCSPR => 1,
         };
 
-        // Placeholder: Cross-contract call to oracle.get_price()
-        // TODO: Wire cross-contract call when Odra external_contract is available
-        // For now, return $1.00 price (1e18)
-        U256::from(SCALE)
+        // Cross-contract call to oracle.get_price()
+        let args = runtime_args! {
+            "collateral_id" => coll_id
+        };
+        let call_def = CallDef::new("get_price", false, args);
+        self.env().call_contract::<U256>(oracle_addr, call_def)
     }
 
     fn process_redemption(
         &mut self,
         collateral_id: CollateralId,
-        csprusd_remaining: U256,
-        collateral_remaining: U256,
+        mut csprusd_remaining: U256,
+        mut collateral_remaining: U256,
         hint: RedemptionHint,
     ) -> u32 {
         // Get branch address
-        let _branch_addr = match collateral_id {
-            CollateralId::Cspr => self.branch_cspr.get(),
-            CollateralId::SCSPR => self.branch_scspr.get(),
+        let branch_addr = match collateral_id {
+            CollateralId::Cspr => self.branch_cspr.get().expect("branch_cspr not set"),
+            CollateralId::SCSPR => self.branch_scspr.get().expect("branch_scspr not set"),
         };
 
-        let _price = self.get_price(collateral_id);
-        let _max_iterations = if hint.max_iterations == 0 { 10 } else { hint.max_iterations };
+        let price = self.get_price(collateral_id);
+        let max_iterations = if hint.max_iterations == 0 { 10 } else { hint.max_iterations };
 
-        // Placeholder: Cross-contract call to branch.get_sorted_vault_owners()
-        // and iteration over vaults for redemption
-        // TODO: Wire cross-contract calls when Odra external_contract is available
-        //
-        // The algorithm should:
-        // 1. Get sorted vault owners from branch (low interest rate first)
-        // 2. For each vault, calculate how much debt/collateral to redeem
-        // 3. Call branch.reduce_collateral_for_redemption(owner, collateral, debt)
-        // 4. Track remaining amounts and vault count
+        // Get sorted vault owners from branch (low interest rate first)
+        let get_sorted_args = runtime_args! {
+            "max_count" => max_iterations
+        };
+        let get_sorted_call = CallDef::new("get_sorted_vault_owners", false, get_sorted_args);
+        let vault_owners: Vec<Address> = self.env().call_contract(branch_addr, get_sorted_call);
 
-        let _ = csprusd_remaining;
-        let _ = collateral_remaining;
+        let mut vaults_touched = 0u32;
 
-        // Return placeholder: 1 vault touched
-        1
+        for owner in vault_owners {
+            if csprusd_remaining.is_zero() || collateral_remaining.is_zero() {
+                break;
+            }
+
+            // Get vault debt
+            let get_debt_args = runtime_args! {
+                "owner" => owner
+            };
+            let get_debt_call = CallDef::new("get_debt", false, get_debt_args);
+            let vault_debt: U256 = self.env().call_contract(branch_addr, get_debt_call);
+
+            if vault_debt.is_zero() {
+                continue;
+            }
+
+            // Get vault collateral
+            let get_coll_args = runtime_args! {
+                "owner" => owner
+            };
+            let get_coll_call = CallDef::new("get_collateral", false, get_coll_args);
+            let vault_collateral: U256 = self.env().call_contract(branch_addr, get_coll_call);
+
+            if vault_collateral.is_zero() {
+                continue;
+            }
+
+            // Calculate how much to redeem from this vault
+            let debt_to_redeem = if csprusd_remaining >= vault_debt {
+                vault_debt
+            } else {
+                csprusd_remaining
+            };
+
+            // Calculate collateral to take: collateral = debt / price
+            let collateral_to_take = debt_to_redeem * U256::from(SCALE) / price;
+
+            // Cap at vault's actual collateral
+            let actual_collateral = if collateral_to_take > vault_collateral {
+                vault_collateral
+            } else {
+                collateral_to_take
+            };
+
+            // Cap at remaining collateral needed
+            let actual_collateral = if actual_collateral > collateral_remaining {
+                collateral_remaining
+            } else {
+                actual_collateral
+            };
+
+            // Recalculate debt based on actual collateral
+            let actual_debt = actual_collateral * price / U256::from(SCALE);
+
+            if actual_debt.is_zero() || actual_collateral.is_zero() {
+                continue;
+            }
+
+            // Call branch to reduce vault collateral and debt
+            let reduce_args = runtime_args! {
+                "owner" => owner,
+                "collateral_amount" => actual_collateral,
+                "debt_amount" => actual_debt
+            };
+            let reduce_call = CallDef::new("reduce_collateral_for_redemption", true, reduce_args);
+            self.env().call_contract::<()>(branch_addr, reduce_call);
+
+            // Update remaining amounts
+            csprusd_remaining = csprusd_remaining.saturating_sub(actual_debt);
+            collateral_remaining = collateral_remaining.saturating_sub(actual_collateral);
+            vaults_touched += 1;
+        }
+
+        vaults_touched
     }
 
-    fn transfer_collateral(&self, collateral_id: CollateralId, recipient: Address, amount: U256) {
+    fn transfer_collateral(&mut self, collateral_id: CollateralId, recipient: Address, amount: U256) {
         if amount.is_zero() {
             return;
         }
@@ -511,12 +606,16 @@ impl RedemptionEngine {
             }
             CollateralId::SCSPR => {
                 // CEP-18 stCSPR transfer
-                // Placeholder: Cross-contract call to stCSPR.transfer()
-                // TODO: Wire cross-contract call when Odra external_contract is available
-                let _scspr_addr = self.scspr_token.get();
-                let _recipient = recipient;
-                let _amount = amount;
-                // scspr.transfer(recipient, amount);
+                let scspr_addr = self.scspr_token.get().expect("scspr_token not set");
+                let args = runtime_args! {
+                    "recipient" => recipient,
+                    "amount" => amount
+                };
+                let call_def = CallDef::new("transfer", true, args);
+                let success: bool = self.env().call_contract(scspr_addr, call_def);
+                if !success {
+                    self.env().revert(CdpError::InsufficientTokenBalance);
+                }
             }
         }
     }

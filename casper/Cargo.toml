@@ -1,6 +1,14 @@
+[package]
+name = "cspr-cdp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/example/cspr-cdp"
+
 [workspace]
 resolver = "2"
 members = [
+    ".",
     "contracts",
     "tests",
     "session",
@@ -11,6 +19,21 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/example/cspr-cdp"
+
+[dependencies]
+cspr-cdp-contracts = { path = "contracts" }
+odra = { version = "2.4.0", default-features = false }
+
+[dev-dependencies]
+odra-test = { version = "2.4.0", default-features = false }
+
+[build-dependencies]
+odra-build = { version = "2.4.0", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+odra-build = { version = "2.4.0", default-features = false }
+odra-casper-livenet-env = { workspace = true }
+dotenv = "0.15"
 
 [workspace.dependencies]
 # Odra framework for Casper smart contracts
@@ -27,6 +50,16 @@ serde_json = "1.0"
 # Testing
 pretty_assertions = "1.4"
 
+[[bin]]
+name = "deploy_livenet"
+path = "bin/deploy_livenet.rs"
+test = false
+
+[[bin]]
+name = "cspr_cdp_build_contract"
+path = "bin/build_contract.rs"
+test = false
+
 [profile.release]
 codegen-units = 1
 lto = true
@@ -36,3 +69,6 @@ panic = "abort"
 [profile.dev]
 opt-level = 0
 debug = true
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -177,6 +177,47 @@ else
     echo "  ⚠ casper-client not found. Install for manual verification."
 fi
 
+# Test 10: StabilityPool + Redemption Contracts
+echo "[Test 10] StabilityPool + Redemption"
+SP_HASH=$(jq -r '.contracts.stabilityPool.hash // "null"' "$DEPLOY_FILE")
+RE_HASH=$(jq -r '.contracts.redemptionEngine.hash // "null"' "$DEPLOY_FILE")
+if [ "$SP_HASH" = "null" ]; then
+    echo "  ✗ StabilityPool not deployed"
+else
+    echo "  ✓ StabilityPool: $SP_HASH"
+fi
+if [ "$RE_HASH" = "null" ]; then
+    echo "  ✗ RedemptionEngine not deployed"
+else
+    echo "  ✓ RedemptionEngine: $RE_HASH"
+fi
+
+# Test 11: StabilityPool State Query Examples
+echo "[Test 11] SP + Redemption State Query Commands"
+if [ "$SP_HASH" != "null" ] || [ "$RE_HASH" != "null" ]; then
+    echo ""
+    echo "  # Get state root"
+    echo "  STATE_ROOT=\$(casper-client get-state-root-hash --node-address $NODE_ADDRESS | jq -r '.result.state_root_hash')"
+    echo ""
+    if [ "$SP_HASH" != "null" ]; then
+        echo "  # Query StabilityPool totals"
+        echo "  casper-client query-global-state \\"
+        echo "    --node-address $NODE_ADDRESS \\"
+        echo "    --state-root-hash \$STATE_ROOT \\"
+        echo "    --key $SP_HASH \\"
+        echo "    -q 'total_deposits'"
+    fi
+    if [ "$RE_HASH" != "null" ]; then
+        echo ""
+        echo "  # Query Redemption stats"
+        echo "  casper-client query-global-state \\"
+        echo "    --node-address $NODE_ADDRESS \\"
+        echo "    --state-root-hash \$STATE_ROOT \\"
+        echo "    --key $RE_HASH \\"
+        echo "    -q 'total_redeemed'"
+    fi
+fi
+
 echo ""
 echo "=== Smoke Test Complete ==="
 echo ""

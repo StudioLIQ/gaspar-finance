@@ -4,7 +4,8 @@
 //! Only authorized protocol contracts (branches, redemption engine) can mint/burn.
 
 use odra::prelude::*;
-use odra::casper_types::U256;
+use odra::casper_types::{U256, RuntimeArgs, runtime_args};
+use odra::CallDef;
 use crate::errors::CdpError;
 
 /// Total supply cap (optional, 0 = unlimited)
@@ -173,13 +174,13 @@ impl CsprUsd {
 
     /// Add an authorized minter (admin only via registry)
     pub fn add_minter(&mut self, minter: Address) {
-        // TODO: Check caller is registry admin
+        self.require_registry_admin();
         self.authorized_minters.set(&minter, true);
     }
 
     /// Remove an authorized minter (admin only via registry)
     pub fn remove_minter(&mut self, minter: Address) {
-        // TODO: Check caller is registry admin
+        self.require_registry_admin();
         self.authorized_minters.set(&minter, false);
     }
 
@@ -190,7 +191,7 @@ impl CsprUsd {
 
     /// Set supply cap (admin only)
     pub fn set_supply_cap(&mut self, cap: U256) {
-        // TODO: Check caller is registry admin
+        self.require_registry_admin();
         self.supply_cap.set(cap);
     }
 
@@ -237,6 +238,25 @@ impl CsprUsd {
     fn require_authorized_minter(&self) {
         let caller = self.env().caller();
         if !self.is_minter(caller) {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
+    }
+
+    fn require_registry_admin(&self) {
+        let caller = self.env().caller();
+        let registry_addr = self.registry.get();
+
+        if registry_addr.is_none() {
+            self.env().revert(CdpError::InvalidConfig);
+        }
+
+        let args = runtime_args! {
+            "caller" => caller
+        };
+        let call_def = CallDef::new("is_admin", false, args);
+        let is_admin: bool = self.env().call_contract(registry_addr.unwrap(), call_def);
+
+        if !is_admin {
             self.env().revert(CdpError::UnauthorizedProtocol);
         }
     }

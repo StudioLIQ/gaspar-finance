@@ -366,6 +366,190 @@ impl BranchSCSPR {
         entry.next
     }
 
+    /// Get sorted vault owners (ascending by interest rate) for redemption iteration
+    /// Returns up to max_count vault owner addresses
+    pub fn get_sorted_vault_owners(&self, max_count: u32) -> Vec<Address> {
+        let mut result = Vec::new();
+        let mut current = self.sorted_head.get().flatten();
+        let mut count = 0u32;
+
+        while let Some(addr) = current {
+            if count >= max_count {
+                break;
+            }
+            result.push(addr);
+            count += 1;
+
+            if let Some(entry) = self.sorted_vaults.get(&addr) {
+                current = entry.next;
+            } else {
+                break;
+            }
+        }
+
+        result
+    }
+
+    /// Get vault collateral amount (for redemption/liquidation queries)
+    pub fn get_collateral(&self, owner: Address) -> U256 {
+        self.vaults.get(&owner).map(|v| v.collateral).unwrap_or(U256::zero())
+    }
+
+    /// Get vault debt amount (for redemption/liquidation queries)
+    pub fn get_debt(&self, owner: Address) -> U256 {
+        self.vaults.get(&owner).map(|v| v.debt).unwrap_or(U256::zero())
+    }
+
+    /// Get vault interest rate in bps (for redemption ordering)
+    pub fn get_interest_rate_bps(&self, owner: Address) -> u32 {
+        self.vaults.get(&owner).map(|v| v.interest_rate_bps).unwrap_or(0)
+    }
+
+    // ========== Frontend-Friendly User State Access ==========
+
+    /// Get user's vault state in a single call (collateral, debt, rate_bps)
+    /// Returns (collateral, debt, interest_rate_bps) as primitives
+    pub fn get_user_vault_state(&self, owner: Address) -> (U256, U256, u32) {
+        match self.vaults.get(&owner) {
+            Some(vault) => (vault.collateral, vault.debt, vault.interest_rate_bps),
+            None => (U256::zero(), U256::zero(), 0),
+        }
+    }
+
+    /// Get total collateral in branch
+    pub fn get_total_collateral(&self) -> U256 {
+        self.total_collateral.get().unwrap_or(U256::zero())
+    }
+
+    /// Get total debt in branch
+    pub fn get_total_debt(&self) -> U256 {
+        self.total_debt.get().unwrap_or(U256::zero())
+    }
+
+    /// Get vault count
+    pub fn get_vault_count(&self) -> u64 {
+        self.vault_count.get().unwrap_or(0)
+    }
+
+    /// Check if safe mode is active
+    pub fn is_safe_mode_active(&self) -> bool {
+        self.safe_mode.get().map(|s| s.is_active).unwrap_or(false)
+    }
+
+    /// Reduce vault collateral and debt during redemption
+    /// Called by RedemptionEngine
+    pub fn reduce_collateral_for_redemption(
+        &mut self,
+        owner: Address,
+        collateral_amount: U256,
+        debt_amount: U256,
+    ) {
+        // TODO: Add caller authorization (only RedemptionEngine)
+
+        let mut vault = match self.vaults.get(&owner) {
+            Some(v) => v,
+            None => self.env().revert(CdpError::VaultNotFound),
+        };
+
+        if collateral_amount > vault.collateral {
+            self.env().revert(CdpError::InsufficientCollateral);
+        }
+        if debt_amount > vault.debt {
+            self.env().revert(CdpError::RepayExceedsDebt);
+        }
+
+        vault.collateral = vault.collateral - collateral_amount;
+        vault.debt = vault.debt - debt_amount;
+
+        let total_coll = self.total_collateral.get().unwrap_or(U256::zero());
+        let total_debt = self.total_debt.get().unwrap_or(U256::zero());
+        self.total_collateral.set(total_coll - collateral_amount);
+        self.total_debt.set(total_debt - debt_amount);
+
+        if vault.collateral.is_zero() && vault.debt.is_zero() {
+            self.remove_from_sorted_list(owner);
+            let count = self.vault_count.get().unwrap_or(0);
+            self.vault_count.set(count.saturating_sub(1));
+        }
+
+        self.vaults.set(&owner, vault);
+    }
+
+    /// Seize collateral from a vault during liquidation
+    /// Called by LiquidationEngine
+    pub fn seize_collateral(&mut self, owner: Address, amount: U256) {
+        // TODO: Add caller authorization (only LiquidationEngine)
+
+        let mut vault = match self.vaults.get(&owner) {
+            Some(v) => v,
+            None => self.env().revert(CdpError::VaultNotFound),
+        };
+
+        if amount > vault.collateral {
+            self.env().revert(CdpError::InsufficientCollateral);
+        }
+
+        vault.collateral = vault.collateral - amount;
+
+        let total_coll = self.total_collateral.get().unwrap_or(U256::zero());
+        self.total_collateral.set(total_coll - amount);
+
+        self.vaults.set(&owner, vault);
+    }
+
+    /// Reduce debt on a vault during liquidation
+    /// Called by LiquidationEngine (when SP absorbs debt)
+    pub fn reduce_debt(&mut self, owner: Address, amount: U256) {
+        // TODO: Add caller authorization (only LiquidationEngine)
+
+        let mut vault = match self.vaults.get(&owner) {
+            Some(v) => v,
+            None => self.env().revert(CdpError::VaultNotFound),
+        };
+
+        if amount > vault.debt {
+            self.env().revert(CdpError::RepayExceedsDebt);
+        }
+
+        vault.debt = vault.debt - amount;
+
+        let total_debt = self.total_debt.get().unwrap_or(U256::zero());
+        self.total_debt.set(total_debt - amount);
+
+        self.vaults.set(&owner, vault);
+    }
+
+    /// Close a vault during liquidation (full liquidation)
+    /// Called by LiquidationEngine
+    pub fn close_vault_for_liquidation(&mut self, owner: Address) {
+        // TODO: Add caller authorization (only LiquidationEngine)
+
+        let vault = match self.vaults.get(&owner) {
+            Some(v) => v,
+            None => self.env().revert(CdpError::VaultNotFound),
+        };
+
+        let total_coll = self.total_collateral.get().unwrap_or(U256::zero());
+        let total_debt = self.total_debt.get().unwrap_or(U256::zero());
+        let count = self.vault_count.get().unwrap_or(0);
+
+        self.total_collateral.set(total_coll - vault.collateral);
+        self.total_debt.set(total_debt - vault.debt);
+        self.vault_count.set(count.saturating_sub(1));
+
+        self.remove_from_sorted_list(owner);
+
+        let empty_vault = VaultData {
+            owner,
+            collateral_id: CollateralId::SCSPR,
+            collateral: U256::zero(),
+            debt: U256::zero(),
+            interest_rate_bps: 0,
+            last_accrual_timestamp: 0,
+        };
+        self.vaults.set(&owner, empty_vault);
+    }
+
     /// Trigger safe mode
     pub fn trigger_safe_mode(&mut self, reason: OracleStatus) {
         let state = SafeModeState {

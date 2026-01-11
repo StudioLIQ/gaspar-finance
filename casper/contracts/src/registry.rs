@@ -1,7 +1,7 @@
 //! Registry contract for managing branches and protocol configuration.
 
 use odra::prelude::*;
-use odra::casper_types::U256;
+use odra::casper_types::{Key, U256};
 use crate::types::{CollateralId, ProtocolConfig, InterestRateBounds};
 use crate::interfaces::CollateralConfig;
 use crate::errors::CdpError;
@@ -35,17 +35,11 @@ pub struct Registry {
 
 #[odra::module]
 impl Registry {
-    /// Initialize the registry with admin and default config
-    pub fn init(&mut self, admin: Address, config: ProtocolConfig) {
-        self.admin.set(admin);
-        self.config.set(config);
-    }
-
     /// Initialize the registry with primitive config values.
-    /// This is a deploy-friendly entrypoint to avoid complex struct encoding.
-    pub fn init_simple(
+    /// Uses Key instead of Address to allow deployment via casper-client.
+    pub fn init(
         &mut self,
-        admin: Address,
+        admin: Key,
         mcr_bps: u32,
         min_debt: U256,
         borrowing_fee_bps: u32,
@@ -65,7 +59,10 @@ impl Registry {
                 max_bps: interest_max_bps,
             },
         };
-        self.init(admin, config);
+        // Convert Key to Address
+        let admin_addr = Address::try_from(admin).expect("Invalid admin key");
+        self.admin.set(admin_addr);
+        self.config.set(config);
     }
 
     /// Set the router contract address (admin only)

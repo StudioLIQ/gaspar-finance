@@ -9,7 +9,14 @@ import {
   getDeployStatus,
   type DeployArg,
 } from '@/lib/casperDeploy';
-import { formatCsprAmount, parseCsprInput } from '@/lib/casperRpc';
+import {
+  formatCsprAmount,
+  parseCsprInput,
+  getStabilityPoolStats,
+  getStabilityPoolUserState,
+  getGusdBalance,
+  formatGusdAmount,
+} from '@/lib/casperRpc';
 
 // Refresh interval for polling data
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
@@ -103,17 +110,8 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  // Format gUSD (18 decimals)
-  const formatGusd = (amount: bigint): string => {
-    const scale = BigInt('1000000000000000000'); // 1e18
-    const whole = amount / scale;
-    const frac = amount % scale;
-    const fracStr = frac.toString().padStart(18, '0').slice(0, 2);
-    return `${whole.toLocaleString()}.${fracStr}`;
-  };
-
   // Computed
-  const userGusdBalanceFormatted = userGusdBalance !== null ? formatGusd(userGusdBalance) : null;
+  const userGusdBalanceFormatted = userGusdBalance !== null ? formatGusdAmount(userGusdBalance) : null;
 
   // Refresh all data
   const refresh = useCallback(async () => {
@@ -125,35 +123,57 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
     setIsRefreshing(true);
 
     try {
-      // Fetch protocol stats (always)
-      // Placeholder: In production, query contract named keys
-      // For now, use mock data that indicates the pool is active
-      const mockStats: StabilityPoolStats = {
-        totalDeposits: BigInt('1000000000000000000000000'), // 1M gUSD
-        totalDepositsFormatted: '1,000,000.00',
-        totalCsprGains: BigInt('50000000000000'), // 50k CSPR
-        totalScsprGains: BigInt('25000000000000'), // 25k stCSPR
-        estimatedAprBps: 850, // 8.5% APR
-      };
-      setPoolStats(mockStats);
+      // Fetch protocol stats from chain
+      const stats = await getStabilityPoolStats();
+      if (stats) {
+        const poolStatsData: StabilityPoolStats = {
+          totalDeposits: stats.totalDeposits,
+          totalDepositsFormatted: stats.totalDepositsFormatted,
+          totalCsprGains: stats.totalCsprCollateral,
+          totalScsprGains: stats.totalScsprCollateral,
+          estimatedAprBps: 0, // APR calculation would require historical data
+        };
+        setPoolStats(poolStatsData);
+      } else {
+        // Fallback to zero stats if query fails
+        setPoolStats({
+          totalDeposits: BigInt(0),
+          totalDepositsFormatted: '0',
+          totalCsprGains: BigInt(0),
+          totalScsprGains: BigInt(0),
+          estimatedAprBps: 0,
+        });
+      }
 
       // Fetch user-specific data if connected
       if (isConnected && publicKey) {
-        // Placeholder: Query user's deposit from contract dictionary
-        // For now, return zero deposit for new users
-        const mockDeposit: StabilityPoolDeposit = {
-          depositedAmount: BigInt(0),
-          depositedFormatted: '0.00',
-          pendingCsprGains: BigInt(0),
-          csprGainsFormatted: '0.00',
-          pendingScsprGains: BigInt(0),
-          scsprGainsFormatted: '0.00',
-        };
-        setUserDeposit(mockDeposit);
+        // Query user's deposit and gains from contract
+        const userState = await getStabilityPoolUserState(publicKey);
+        if (userState) {
+          const deposit: StabilityPoolDeposit = {
+            depositedAmount: userState.deposit,
+            depositedFormatted: userState.depositFormatted,
+            pendingCsprGains: userState.csprGains,
+            csprGainsFormatted: userState.csprGainsFormatted,
+            pendingScsprGains: userState.scsprGains,
+            scsprGainsFormatted: userState.scsprGainsFormatted,
+          };
+          setUserDeposit(deposit);
+        } else {
+          // User has no deposit
+          setUserDeposit({
+            depositedAmount: BigInt(0),
+            depositedFormatted: '0.00',
+            pendingCsprGains: BigInt(0),
+            csprGainsFormatted: '0.00',
+            pendingScsprGains: BigInt(0),
+            scsprGainsFormatted: '0.00',
+          });
+        }
 
-        // Placeholder: Query user's gUSD balance
-        // For demo, show some balance
-        setUserGusdBalance(BigInt('5000000000000000000000')); // 5000 gUSD
+        // Query user's gUSD balance
+        const gusdBal = await getGusdBalance(publicKey);
+        setUserGusdBalance(gusdBal);
       } else {
         setUserDeposit(null);
         setUserGusdBalance(null);
@@ -410,17 +430,11 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
     setTxHash(null);
 
     try {
-      // claim_gains takes collateral_id (u8): 0=CSPR, 1=stCSPR
-      // For simplicity, claim both by calling twice or use a combined entrypoint
-      // The contract has claim_gains_u8 which claims for a specific collateral
-      // We'll claim CSPR gains (collateral_id = 0)
-      const claimArgs: DeployArg[] = [
-        { name: 'collateral_id', clType: 'U8', value: '0' }, // CSPR
-      ];
-
+      // Claim gains (CSPR + stCSPR) in a single call.
+      const claimArgs: DeployArg[] = [];
       const claimDeploy = buildContractCallDeploy(publicKey, {
         contractHash: spHash,
-        entryPoint: 'claim_gains_u8',
+        entryPoint: 'claim_gains',
         args: claimArgs,
       });
 
@@ -481,4 +495,3 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
     resetTxState,
   };
 }
-

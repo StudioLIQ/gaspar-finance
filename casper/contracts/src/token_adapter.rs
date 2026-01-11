@@ -10,7 +10,8 @@
 //! received when dealing with tokens that may have transfer fees.
 
 use odra::prelude::*;
-use odra::casper_types::U256;
+use odra::casper_types::{U256, RuntimeArgs, runtime_args};
+use odra::CallDef;
 use crate::errors::CdpError;
 
 /// CEP-18 token interface for cross-contract calls
@@ -95,7 +96,7 @@ impl TokenAdapter {
         decimals: u8,
         has_transfer_fee: bool,
     ) {
-        // TODO: Add admin access control
+        self.require_registry_admin();
 
         let info = TokenInfo {
             address: token_address,
@@ -112,7 +113,7 @@ impl TokenAdapter {
 
     /// Remove token from registry (admin only)
     pub fn unregister_token(&mut self, token_address: Address) {
-        // TODO: Add admin access control
+        self.require_registry_admin();
         self.whitelisted_tokens.set(&token_address, false);
     }
 
@@ -257,13 +258,13 @@ impl TokenAdapter {
 
     /// Add authorized caller (admin only)
     pub fn add_caller(&mut self, caller: Address) {
-        // TODO: Add admin access control
+        self.require_registry_admin();
         self.authorized_callers.set(&caller, true);
     }
 
     /// Remove authorized caller (admin only)
     pub fn remove_caller(&mut self, caller: Address) {
-        // TODO: Add admin access control
+        self.require_registry_admin();
         self.authorized_callers.set(&caller, false);
     }
 
@@ -274,7 +275,7 @@ impl TokenAdapter {
 
     /// Set fee-on-transfer flag for a token (admin only)
     pub fn set_token_has_fee(&mut self, token_address: Address, has_fee: bool) {
-        // TODO: Add admin access control
+        self.require_registry_admin();
         self.has_fee.set(&token_address, has_fee);
     }
 
@@ -283,6 +284,25 @@ impl TokenAdapter {
     fn require_authorized_caller(&self) {
         let caller = self.env().caller();
         if !self.is_authorized_caller(caller) {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
+    }
+
+    fn require_registry_admin(&self) {
+        let caller = self.env().caller();
+        let registry_addr = self.registry.get();
+
+        if registry_addr.is_none() {
+            self.env().revert(CdpError::InvalidConfig);
+        }
+
+        let args = runtime_args! {
+            "caller" => caller
+        };
+        let call_def = CallDef::new("is_admin", false, args);
+        let is_admin: bool = self.env().call_contract(registry_addr.unwrap(), call_def);
+
+        if !is_admin {
             self.env().revert(CdpError::UnauthorizedProtocol);
         }
     }
