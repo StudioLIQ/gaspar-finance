@@ -11,6 +11,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/../frontend"
 DEPLOY_DIR="$ROOT_DIR/../deployments/casper"
 CONFIG_DIR="$ROOT_DIR/../config"
+PUBLIC_CONFIG_DIR="$FRONTEND_DIR/public/config"
 
 NETWORK="${1:-testnet}"
 DEPLOY_FILE="${2:-}"
@@ -64,6 +65,7 @@ WITHDRAW_QUEUE_HASH=$(jq -r '.contracts.withdrawQueue.hash // "null"' "$DEPLOY_F
 
 # Create frontend config
 mkdir -p "$CONFIG_DIR"
+mkdir -p "$PUBLIC_CONFIG_DIR"
 
 cat > "$CONFIG_DIR/casper-${NETWORK}.json" << EOF
 {
@@ -90,6 +92,10 @@ cat > "$CONFIG_DIR/casper-${NETWORK}.json" << EOF
 EOF
 
 echo "✓ Created config: $CONFIG_DIR/casper-${NETWORK}.json"
+
+# Mirror config into frontend/public for Vercel (no env vars required)
+cp "$CONFIG_DIR/casper-${NETWORK}.json" "$PUBLIC_CONFIG_DIR/casper-${NETWORK}.json"
+echo "✓ Updated public config: $PUBLIC_CONFIG_DIR/casper-${NETWORK}.json"
 
 # Update frontend .env.local
 ENV_FILE="$FRONTEND_DIR/.env.local"
@@ -146,6 +152,7 @@ echo "=== Frontend Binding Complete ==="
 echo ""
 echo "Files updated:"
 echo "  - $CONFIG_DIR/casper-${NETWORK}.json"
+echo "  - $PUBLIC_CONFIG_DIR/casper-${NETWORK}.json"
 echo "  - $ENV_EXAMPLE"
 echo ""
 echo "Next steps:"

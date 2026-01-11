@@ -23,44 +23,142 @@ export const CASPER_MAINNET = {
   explorerUrl: 'https://cspr.live',
 } as const;
 
-// Current network selection
-export const CURRENT_NETWORK = process.env.NEXT_PUBLIC_CASPER_NETWORK || 'testnet';
+type RuntimeContracts = {
+  registry?: string;
+  router?: string;
+  stablecoin?: string;
+  oracleAdapter?: string;
+  stabilityPool?: string;
+  branchCspr?: string;
+  branchSCSPR?: string;
+  treasury?: string;
+  liquidationEngine?: string;
+  redemptionEngine?: string;
+  scsprYbToken?: string;
+  scsprYbTokenPackage?: string;
+  withdrawQueue?: string;
+};
+
+export type RuntimeConfig = {
+  network?: string;
+  chainName?: string;
+  nodeAddress?: string;
+  contracts?: RuntimeContracts;
+  generatedAt?: string;
+};
+
+const getRuntimeConfig = (): RuntimeConfig | null => {
+  if (typeof window !== 'undefined') {
+    return (window as Window & { __CSPR_CDP_CONFIG__?: RuntimeConfig }).__CSPR_CDP_CONFIG__ || null;
+  }
+  return (globalThis as typeof globalThis & { __CSPR_CDP_CONFIG__?: RuntimeConfig })
+    .__CSPR_CDP_CONFIG__ || null;
+};
+
+const normalizeHash = (value?: string | null): string | null => {
+  if (!value || value === 'null') return null;
+  return value;
+};
+
+export const getCurrentNetwork = () => {
+  const runtime = getRuntimeConfig();
+  return runtime?.network || process.env.NEXT_PUBLIC_CASPER_NETWORK || 'testnet';
+};
 
 export const getNetworkConfig = () => {
-  return CURRENT_NETWORK === 'mainnet' ? CASPER_MAINNET : CASPER_TESTNET;
+  const network = getCurrentNetwork();
+  const base = network === 'mainnet' ? CASPER_MAINNET : CASPER_TESTNET;
+  const runtime = getRuntimeConfig();
+  return {
+    ...base,
+    network,
+    chainName: runtime?.chainName || base.chainName,
+    rpcUrl: runtime?.nodeAddress || base.rpcUrl,
+  };
 };
 
 // Wallet Configuration
 export const SUPPORTED_WALLET = 'Casper Wallet' as const;
 
 // Contract Addresses (populated after deployment)
-export const CONTRACTS = {
-  registry: process.env.NEXT_PUBLIC_REGISTRY_HASH || null,
-  router: process.env.NEXT_PUBLIC_ROUTER_HASH || null,
-  stablecoin: process.env.NEXT_PUBLIC_STABLECOIN_HASH || null,
-  oracleAdapter: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_HASH || null,
-  stabilityPool: process.env.NEXT_PUBLIC_STABILITY_POOL_HASH || null,
-  branchCspr: process.env.NEXT_PUBLIC_BRANCH_CSPR_HASH || null,
-  branchSCSPR:
-    process.env.NEXT_PUBLIC_BRANCH_SCSPR_HASH ||
-    process.env.NEXT_PUBLIC_BRANCH_STCSPR_HASH ||
-    null,
-  treasury: process.env.NEXT_PUBLIC_TREASURY_HASH || null,
-  liquidationEngine: process.env.NEXT_PUBLIC_LIQUIDATION_ENGINE_HASH || null,
-  redemptionEngine: process.env.NEXT_PUBLIC_REDEMPTION_ENGINE_HASH || null,
-  // LST (stCSPR ybToken + withdraw queue)
-  scsprYbtoken: process.env.NEXT_PUBLIC_SCSPR_YBTOKEN_HASH || null,
-  scsprYbtokenPackage: process.env.NEXT_PUBLIC_SCSPR_YBTOKEN_PACKAGE_HASH || null,
-  withdrawQueue: process.env.NEXT_PUBLIC_WITHDRAW_QUEUE_HASH || null,
-} as const;
+type Contracts = {
+  registry: string | null;
+  router: string | null;
+  stablecoin: string | null;
+  oracleAdapter: string | null;
+  stabilityPool: string | null;
+  branchCspr: string | null;
+  branchSCSPR: string | null;
+  treasury: string | null;
+  liquidationEngine: string | null;
+  redemptionEngine: string | null;
+  scsprYbtoken: string | null;
+  scsprYbtokenPackage: string | null;
+  withdrawQueue: string | null;
+};
+
+const buildContracts = (): Contracts => {
+  const runtimeContracts = getRuntimeConfig()?.contracts || {};
+  return {
+    registry:
+      normalizeHash(runtimeContracts.registry) ??
+      normalizeHash(process.env.NEXT_PUBLIC_REGISTRY_HASH),
+    router:
+      normalizeHash(runtimeContracts.router) ??
+      normalizeHash(process.env.NEXT_PUBLIC_ROUTER_HASH),
+    stablecoin:
+      normalizeHash(runtimeContracts.stablecoin) ??
+      normalizeHash(process.env.NEXT_PUBLIC_STABLECOIN_HASH),
+    oracleAdapter:
+      normalizeHash(runtimeContracts.oracleAdapter) ??
+      normalizeHash(process.env.NEXT_PUBLIC_ORACLE_ADAPTER_HASH),
+    stabilityPool:
+      normalizeHash(runtimeContracts.stabilityPool) ??
+      normalizeHash(process.env.NEXT_PUBLIC_STABILITY_POOL_HASH),
+    branchCspr:
+      normalizeHash(runtimeContracts.branchCspr) ??
+      normalizeHash(process.env.NEXT_PUBLIC_BRANCH_CSPR_HASH),
+    branchSCSPR:
+      normalizeHash(runtimeContracts.branchSCSPR) ??
+      normalizeHash(process.env.NEXT_PUBLIC_BRANCH_SCSPR_HASH) ??
+      normalizeHash(process.env.NEXT_PUBLIC_BRANCH_STCSPR_HASH),
+    treasury:
+      normalizeHash(runtimeContracts.treasury) ??
+      normalizeHash(process.env.NEXT_PUBLIC_TREASURY_HASH),
+    liquidationEngine:
+      normalizeHash(runtimeContracts.liquidationEngine) ??
+      normalizeHash(process.env.NEXT_PUBLIC_LIQUIDATION_ENGINE_HASH),
+    redemptionEngine:
+      normalizeHash(runtimeContracts.redemptionEngine) ??
+      normalizeHash(process.env.NEXT_PUBLIC_REDEMPTION_ENGINE_HASH),
+    scsprYbtoken:
+      normalizeHash(runtimeContracts.scsprYbToken) ??
+      normalizeHash(process.env.NEXT_PUBLIC_SCSPR_YBTOKEN_HASH),
+    scsprYbtokenPackage:
+      normalizeHash(runtimeContracts.scsprYbTokenPackage) ??
+      normalizeHash(process.env.NEXT_PUBLIC_SCSPR_YBTOKEN_PACKAGE_HASH),
+    withdrawQueue:
+      normalizeHash(runtimeContracts.withdrawQueue) ??
+      normalizeHash(process.env.NEXT_PUBLIC_WITHDRAW_QUEUE_HASH),
+  };
+};
+
+export const CONTRACTS: Contracts = new Proxy({} as Contracts, {
+  get(_target, prop: string) {
+    const contracts = buildContracts();
+    return (contracts as Record<string, string | null>)[prop];
+  },
+});
 
 // Check if contracts are deployed
 export const isContractsDeployed = () => {
-  return CONTRACTS.router !== null && CONTRACTS.router !== 'null';
+  const { router } = buildContracts();
+  return router !== null;
 };
 
 export const isLSTDeployed = () => {
-  return CONTRACTS.scsprYbtoken !== null && CONTRACTS.scsprYbtoken !== 'null';
+  const { scsprYbtoken } = buildContracts();
+  return scsprYbtoken !== null;
 };
 
 // Protocol Parameters
@@ -107,6 +205,16 @@ export const formatContractHash = (hash: string | null): string => {
   }
   return hash;
 };
+
+declare global {
+  interface Window {
+    __CSPR_CDP_CONFIG__?: RuntimeConfig;
+  }
+  // eslint-disable-next-line no-var
+  var __CSPR_CDP_CONFIG__: RuntimeConfig | undefined;
+}
+
+export {};
 
 export const getExplorerUrl = (hash: string, type: 'deploy' | 'account' | 'contract' = 'deploy') => {
   const network = getNetworkConfig();

@@ -4,7 +4,7 @@
 // Uses named_keys + URef pattern for reading contract state.
 // Supports dictionary item queries for indexed data (balances, requests).
 
-import { getNetworkConfig, CONTRACTS, CURRENT_NETWORK } from './config';
+import { getNetworkConfig, CONTRACTS, getCurrentNetwork } from './config';
 
 // RPC Response Types
 interface RpcResponse<T> {
@@ -129,7 +129,9 @@ let unbondingPeriodOverrideSec: number | null = null;
 
 export function getUnbondingPeriod(): number {
   if (unbondingPeriodOverrideSec && unbondingPeriodOverrideSec > 0) return unbondingPeriodOverrideSec;
-  return CURRENT_NETWORK === 'mainnet' ? UNBONDING_PERIOD_MAINNET : UNBONDING_PERIOD_TESTNET;
+  return getCurrentNetwork() === 'mainnet'
+    ? UNBONDING_PERIOD_MAINNET
+    : UNBONDING_PERIOD_TESTNET;
 }
 
 export function getUnbondingPeriodDisplay(): string {
@@ -821,4 +823,219 @@ export function formatGusdAmount(amount: bigint, decimals: number = 2): string {
 
   const trimmedFractional = truncatedFractional.replace(/0+$/, '');
   return `${wholePart.toLocaleString()}.${trimmedFractional || '0'}`;
+}
+
+// ========== CDP Vault Queries ==========
+
+// Collateral type enum
+export type CollateralType = 'cspr' | 'scspr';
+
+// Vault data structure
+export interface VaultData {
+  owner: string;
+  collateralId: CollateralType;
+  collateral: bigint;
+  debt: bigint;
+  interestRateBps: number;
+  lastAccrualTimestamp: number;
+}
+
+// Vault info with computed values
+export interface VaultInfo {
+  vault: VaultData;
+  icrBps: number; // Individual Collateralization Ratio in basis points
+  collateralValueUsd: bigint;
+}
+
+// Branch status
+export interface BranchStatus {
+  collateralId: CollateralType;
+  totalCollateral: bigint;
+  totalDebt: bigint;
+  vaultCount: number;
+  isSafeModeActive: boolean;
+}
+
+// Get user's vault for a specific collateral type
+export async function getUserVault(
+  publicKey: string,
+  collateralType: CollateralType
+): Promise<VaultInfo | null> {
+  const branchHash = collateralType === 'cspr'
+    ? CONTRACTS.branchCspr
+    : CONTRACTS.branchSCSPR;
+
+  if (!branchHash || branchHash === 'null') {
+    return null;
+  }
+
+  try {
+    const accountHash = await getAccountHash(publicKey);
+    if (!accountHash) {
+      return null;
+    }
+
+    // Query vault from the vaults dictionary
+    const vaultRaw = await queryContractDictionary(branchHash, 'vaults', accountHash);
+    if (!vaultRaw) {
+      return null;
+    }
+
+    // Parse vault data
+    const vault = vaultRaw as Record<string, unknown>;
+    const vaultData: VaultData = {
+      owner: String(vault.owner || ''),
+      collateralId: collateralType,
+      collateral: BigInt(String(vault.collateral || '0')),
+      debt: BigInt(String(vault.debt || '0')),
+      interestRateBps: Number(vault.interest_rate_bps || 0),
+      lastAccrualTimestamp: Number(vault.last_accrual_timestamp || 0),
+    };
+
+    // Get current price for ICR calculation
+    const price = await getCollateralPrice(collateralType);
+    const collateralValueUsd = calculateCollateralValue(vaultData.collateral, price, collateralType);
+    const icrBps = calculateIcr(collateralValueUsd, vaultData.debt);
+
+    return {
+      vault: vaultData,
+      icrBps,
+      collateralValueUsd,
+    };
+  } catch (error) {
+    console.error(`Failed to get vault for ${collateralType}:`, error);
+    return null;
+  }
+}
+
+// Get branch status for a collateral type
+export async function getBranchStatus(collateralType: CollateralType): Promise<BranchStatus | null> {
+  const branchHash = collateralType === 'cspr'
+    ? CONTRACTS.branchCspr
+    : CONTRACTS.branchSCSPR;
+
+  if (!branchHash || branchHash === 'null') {
+    return null;
+  }
+
+  try {
+    const [totalCollateralRaw, totalDebtRaw, vaultCountRaw] = await Promise.all([
+      queryContractNamedKey(branchHash, 'total_collateral'),
+      queryContractNamedKey(branchHash, 'total_debt'),
+      queryContractNamedKey(branchHash, 'vault_count'),
+    ]);
+
+    return {
+      collateralId: collateralType,
+      totalCollateral: BigInt(String(totalCollateralRaw || '0')),
+      totalDebt: BigInt(String(totalDebtRaw || '0')),
+      vaultCount: Number(vaultCountRaw || 0),
+      isSafeModeActive: false, // TODO: query from router
+    };
+  } catch (error) {
+    console.error(`Failed to get branch status for ${collateralType}:`, error);
+    return null;
+  }
+}
+
+// Get collateral price from oracle adapter
+export async function getCollateralPrice(collateralType: CollateralType): Promise<bigint> {
+  const oracleHash = CONTRACTS.oracleAdapter;
+  if (!oracleHash || oracleHash === 'null') {
+    // Default price: 1 CSPR = $0.02 (scaled to 18 decimals)
+    return BigInt('20000000000000000'); // 0.02 * 1e18
+  }
+
+  try {
+    if (collateralType === 'cspr') {
+      const priceRaw = await queryContractNamedKey(oracleHash, 'last_good_price');
+      return BigInt(String(priceRaw || '20000000000000000'));
+    } else {
+      // stCSPR price = CSPR price * exchange rate
+      const [priceRaw, rateRaw] = await Promise.all([
+        queryContractNamedKey(oracleHash, 'last_good_price'),
+        queryContractNamedKey(oracleHash, 'last_good_exchange_rate'),
+      ]);
+      const csprPrice = BigInt(String(priceRaw || '20000000000000000'));
+      const exchangeRate = BigInt(String(rateRaw || '1000000000000000000'));
+      // stCSPR price = CSPR price * exchange rate / 1e18
+      return (csprPrice * exchangeRate) / BigInt('1000000000000000000');
+    }
+  } catch (error) {
+    console.error('Failed to get collateral price:', error);
+    return BigInt('20000000000000000');
+  }
+}
+
+// Calculate collateral value in USD (scaled to 18 decimals)
+export function calculateCollateralValue(
+  collateralAmount: bigint,
+  priceUsd: bigint,
+  collateralType: CollateralType
+): bigint {
+  // CSPR/stCSPR use 9 decimals, price uses 18 decimals
+  // collateralValue = collateral * price / 1e9
+  const decimals = collateralType === 'cspr' ? 9 : 9;
+  return (collateralAmount * priceUsd) / BigInt(10 ** decimals);
+}
+
+// Calculate Individual Collateralization Ratio in basis points
+export function calculateIcr(collateralValueUsd: bigint, debt: bigint): number {
+  if (debt === BigInt(0)) {
+    return 100000; // 1000% if no debt
+  }
+  // ICR = (collateralValue / debt) * 10000
+  return Number((collateralValueUsd * BigInt(10000)) / debt);
+}
+
+// Protocol constants
+export const CDP_CONSTANTS = {
+  MCR_BPS: 11000, // 110% minimum collateralization ratio
+  CCR_BPS: 15000, // 150% critical collateralization ratio
+  MIN_DEBT: BigInt('2000000000000000000000'), // 2000 gUSD (18 decimals)
+  LIQUIDATION_PENALTY_BPS: 1000, // 10%
+  BORROWING_FEE_BPS: 50, // 0.5%
+  MIN_INTEREST_RATE_BPS: 0,
+  MAX_INTEREST_RATE_BPS: 4000, // 40%
+};
+
+// Calculate max borrowable gUSD for given collateral
+export function calculateMaxBorrow(
+  collateralAmount: bigint,
+  priceUsd: bigint,
+  collateralType: CollateralType,
+  targetCrBps: number = CDP_CONSTANTS.MCR_BPS
+): bigint {
+  const collateralValue = calculateCollateralValue(collateralAmount, priceUsd, collateralType);
+  // maxBorrow = collateralValue * 10000 / targetCR
+  return (collateralValue * BigInt(10000)) / BigInt(targetCrBps);
+}
+
+// Calculate required collateral for given debt
+export function calculateRequiredCollateral(
+  debtAmount: bigint,
+  priceUsd: bigint,
+  collateralType: CollateralType,
+  targetCrBps: number = CDP_CONSTANTS.MCR_BPS
+): bigint {
+  // requiredCollateralValue = debt * targetCR / 10000
+  const requiredValue = (debtAmount * BigInt(targetCrBps)) / BigInt(10000);
+  // requiredCollateral = requiredValue * 1e9 / price
+  const decimals = collateralType === 'cspr' ? 9 : 9;
+  return (requiredValue * BigInt(10 ** decimals)) / priceUsd;
+}
+
+// Calculate liquidation price for a vault
+export function calculateLiquidationPrice(
+  collateralAmount: bigint,
+  debt: bigint,
+  collateralType: CollateralType
+): bigint {
+  if (collateralAmount === BigInt(0)) {
+    return BigInt(0);
+  }
+  // liquidationPrice = (debt * MCR / 10000) * 1e9 / collateral
+  const decimals = collateralType === 'cspr' ? 9 : 9;
+  const requiredValue = (debt * BigInt(CDP_CONSTANTS.MCR_BPS)) / BigInt(10000);
+  return (requiredValue * BigInt(10 ** decimals)) / collateralAmount;
 }
