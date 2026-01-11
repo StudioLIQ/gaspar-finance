@@ -229,12 +229,12 @@ impl Registry {
 pub fn default_protocol_config() -> ProtocolConfig {
     ProtocolConfig {
         mcr_bps: 11000,
-        min_debt: U256::from(2000) * U256::from(10).pow(U256::from(18)),
+        min_debt: U256::from(1) * U256::from(10).pow(U256::from(18)),
         borrowing_fee_bps: 50,
         redemption_fee_bps: 50,
         liquidation_penalty_bps: 1000,
         interest_rate_bounds: InterestRateBounds {
-            min_bps: 0,
+            min_bps: 200,
             max_bps: 4000,
         },
     }

@@ -52,11 +52,11 @@ fn main() {
 
     // Protocol parameters
     let mcr_bps: u32 = 11000; // 110% MCR
-    let min_debt = U256::from(2000u64) * U256::from(10u64).pow(U256::from(18u64)); // 2000 gUSD
+    let min_debt = U256::from(1u64) * U256::from(10u64).pow(U256::from(18u64)); // 1 gUSD
     let borrowing_fee_bps: u32 = 50; // 0.5%
     let redemption_fee_bps: u32 = 50; // 0.5%
     let liquidation_penalty_bps: u32 = 1000; // 10%
-    let interest_min_bps: u32 = 0;
+    let interest_min_bps: u32 = 200; // 2%
     let interest_max_bps: u32 = 4000; // 40%
 
     // ==================== Phase 1: Independent Contracts ====================

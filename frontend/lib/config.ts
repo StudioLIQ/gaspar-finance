@@ -168,14 +168,14 @@ export const PROTOCOL_PARAMS = {
   CCR_BPS: 15000, // 150% Critical Collateralization Ratio
 
   // Minimum Debt (in gUSD, with 18 decimals)
-  MIN_DEBT: '2000000000000000000000', // 2000 gUSD
+  MIN_DEBT: '1000000000000000000', // 1 gUSD
 
   // Fee Configuration (in basis points)
   LIQUIDATION_PENALTY_BPS: 1000, // 10%
   REDEMPTION_BASE_FEE_BPS: 50, // 0.5%
 
   // Interest Rate Bounds (in basis points)
-  MIN_INTEREST_RATE_BPS: 0,
+  MIN_INTEREST_RATE_BPS: 200, // 2%
   MAX_INTEREST_RATE_BPS: 4000, // 40%
 } as const;
 
