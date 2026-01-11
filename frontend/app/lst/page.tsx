@@ -54,6 +54,7 @@ export default function LstPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
           <LstStakeCard
             exchangeRate={lst.exchangeRate}
+            userCsprBalance={lst.userCsprBalance}
             txStatus={lst.txStatus}
             txError={lst.txError}
             onStake={lst.stake}

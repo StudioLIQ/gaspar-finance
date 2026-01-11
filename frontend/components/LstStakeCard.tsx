@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import type { LstExchangeRate, TxStatus } from '@/hooks/useLst';
+import { formatCsprAmount } from '@/lib/casperRpc';
 
 interface LstStakeCardProps {
   exchangeRate: LstExchangeRate | null;
+  userCsprBalance: bigint | null;
   txStatus: TxStatus;
   txError: string | null;
   onStake: (amount: string) => Promise<boolean>;
@@ -18,6 +20,7 @@ interface LstStakeCardProps {
 
 export function LstStakeCard({
   exchangeRate,
+  userCsprBalance,
   txStatus,
   txError,
   onStake,
@@ -27,6 +30,19 @@ export function LstStakeCard({
   const { isConnected } = useCasperWallet();
   const [amount, setAmount] = useState('');
   const [preview, setPreview] = useState<{ shares: bigint; formatted: string } | null>(null);
+
+  // Format CSPR balance for display
+  const formattedCsprBalance = userCsprBalance !== null ? formatCsprAmount(userCsprBalance) : null;
+
+  // Handle max button click (leave 5 CSPR for gas)
+  const handleMax = () => {
+    if (userCsprBalance !== null) {
+      const gasBuffer = BigInt('5000000000'); // 5 CSPR
+      const maxAmount = userCsprBalance > gasBuffer ? userCsprBalance - gasBuffer : BigInt(0);
+      const formatted = formatCsprAmount(maxAmount);
+      setAmount(formatted);
+    }
+  };
 
   // Update preview when amount changes
   useEffect(() => {
@@ -52,14 +68,31 @@ export function LstStakeCard({
   return (
     <Card title="Stake CSPR" subtitle="Deposit CSPR to receive stCSPR">
       <div className="space-y-4">
+        {/* Balance Display */}
+        {isConnected && (
+          <div className="bg-gray-50 rounded-lg p-3 mb-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-600">Your CSPR Balance</span>
+              <span className="text-sm font-semibold text-gray-900">
+                {formattedCsprBalance !== null ? `${formattedCsprBalance} CSPR` : 'Loading...'}
+              </span>
+            </div>
+          </div>
+        )}
+
         <Input
           label={
             <div className="flex items-center justify-between w-full">
               <span>CSPR Amount</span>
-              {exchangeRate && (
-                <span className="text-xs text-gray-400">
-                  Rate: {exchangeRate.rateFormatted} CSPR/stCSPR
-                </span>
+              {isConnected && formattedCsprBalance !== null && (
+                <button
+                  type="button"
+                  onClick={handleMax}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                  disabled={isLoading}
+                >
+                  MAX
+                </button>
               )}
             </div>
           }
