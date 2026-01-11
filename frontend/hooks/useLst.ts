@@ -311,6 +311,13 @@ export function useLst(): LstState & LstActions {
           csprMotes.toString(),
           wasmBase64
         );
+        if (typeof window !== 'undefined') {
+          (window as Window & { __LAST_DEPLOY_JSON__?: object }).__LAST_DEPLOY_JSON__ = deployJson;
+          if (process.env.NEXT_PUBLIC_DEBUG_DEPLOYS === 'true') {
+            // eslint-disable-next-line no-console
+            console.log('[LST] deposit deploy', deployJson);
+          }
+        }
 
         // Sign the deploy
         const signedDeploy = await signDeploy(deployJson);
