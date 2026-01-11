@@ -236,7 +236,7 @@ export function CdpOpenVaultCard({
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">Liquidation Price</span>
               <span className="text-sm font-semibold text-orange-600">
-                ${(Number(preview.liquidationPrice) / 1e18).toFixed(4)}
+                ${(Number(preview.liquidationPrice) / 1e18).toFixed(6)}
               </span>
             </div>
             <div className="flex items-center justify-between">

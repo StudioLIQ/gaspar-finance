@@ -114,13 +114,13 @@ export function CdpStatsCard({
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">CSPR</span>
               <span className="text-sm font-semibold text-gray-900">
-                ${(Number(csprPrice) / 1e18).toFixed(4)}
+                ${(Number(csprPrice) / 1e18).toFixed(6)}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">stCSPR</span>
               <span className="text-sm font-semibold text-gray-900">
-                ${(Number(scsprPrice) / 1e18).toFixed(4)}
+                ${(Number(scsprPrice) / 1e18).toFixed(6)}
               </span>
             </div>
           </div>

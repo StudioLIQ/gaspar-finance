@@ -152,7 +152,7 @@ export function CdpVaultCard({
         <div className="flex items-center justify-between border-t border-gray-100 pt-4">
           <span className="text-sm text-gray-600">Liquidation Price</span>
           <span className="text-sm font-semibold text-orange-600">
-            ${liquidationPrice.toFixed(4)}
+            ${liquidationPrice.toFixed(6)}
           </span>
         </div>
 
@@ -160,7 +160,7 @@ export function CdpVaultCard({
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-600">Current Price</span>
           <span className="text-sm font-semibold text-gray-900">
-            ${priceUsd.toFixed(4)}
+            ${priceUsd.toFixed(6)}
           </span>
         </div>
 
