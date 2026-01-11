@@ -98,7 +98,7 @@ export function Header() {
           </Link>
 
           {/* Navigation */}
-          <nav className="hidden sm:flex items-center gap-1 ml-4">
+          <nav className="hidden sm:flex items-center gap-1 ml-4 flex-shrink-0">
             {NAV_ITEMS.map((item) => {
               const isActive = pathname === item.href;
               return (
@@ -127,7 +127,7 @@ export function Header() {
 
           {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
-            <div className="hidden md:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
+            <div className="hidden lg:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
               {/* Balances */}
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-gray-600">
@@ -159,9 +159,9 @@ export function Header() {
             </div>
           )}
 
-          {/* Mobile: Just show address */}
+          {/* Tablet/Mobile: Just show address */}
           {isConnected && publicKey && (
-            <div className="md:hidden flex flex-col text-right">
+            <div className="lg:hidden flex flex-col text-right">
               <span className="text-sm font-medium text-gray-900">{shortenPublicKey(publicKey, 6)}</span>
             </div>
           )}

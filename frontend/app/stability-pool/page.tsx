@@ -17,6 +17,12 @@ function isStabilityPoolDeployed(): boolean {
 }
 
 // Deposit Card Component
+// Format bigint to human-readable string (18 decimals)
+function formatBalance(value: bigint): string {
+  const num = Number(value) / 1e18;
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function DepositCard({
   userGusdBalance,
   userGusdBalanceFormatted,
@@ -41,6 +47,12 @@ function DepositCard({
     if (success) setAmount('');
   };
 
+  const handleMaxDeposit = () => {
+    if (userGusdBalance && userGusdBalance > BigInt(0)) {
+      setAmount(formatBalance(userGusdBalance));
+    }
+  };
+
   const canDeposit =
     isConnected &&
     amount.length > 0 &&
@@ -52,7 +64,21 @@ function DepositCard({
     <Card title="Deposit gUSD" subtitle="Earn liquidation gains">
       <div className="space-y-4">
         <Input
-          label="Amount"
+          label={
+            <div className="flex items-center justify-between w-full">
+              <span>Amount</span>
+              {isConnected && userGusdBalance && userGusdBalance > BigInt(0) && (
+                <button
+                  type="button"
+                  onClick={handleMaxDeposit}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                >
+                  MAX
+                </button>
+              )}
+            </div>
+          }
           type="number"
           placeholder="0.00"
           value={amount}
@@ -125,6 +151,12 @@ function WithdrawCard({
     if (success) setAmount('');
   };
 
+  const handleMaxWithdraw = () => {
+    if (userDeposit && userDeposit.depositedAmount > BigInt(0)) {
+      setAmount(formatBalance(userDeposit.depositedAmount));
+    }
+  };
+
   const canWithdraw =
     isConnected &&
     amount.length > 0 &&
@@ -138,7 +170,21 @@ function WithdrawCard({
     <Card title="Withdraw gUSD" subtitle="Withdraw your deposit">
       <div className="space-y-4">
         <Input
-          label="Amount"
+          label={
+            <div className="flex items-center justify-between w-full">
+              <span>Amount</span>
+              {isConnected && userDeposit && userDeposit.depositedAmount > BigInt(0) && (
+                <button
+                  type="button"
+                  onClick={handleMaxWithdraw}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                >
+                  MAX
+                </button>
+              )}
+            </div>
+          }
           type="number"
           placeholder="0.00"
           value={amount}
@@ -252,7 +298,7 @@ function GainsCard({
           onClick={handleClaim}
           disabled={!canClaim}
           isLoading={txStatus === 'signing' || txStatus === 'pending'}
-          variant="success"
+          variant="primary"
           className="w-full"
         >
           {!isConnected

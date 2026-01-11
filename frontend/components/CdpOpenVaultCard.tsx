@@ -99,6 +99,20 @@ export function CdpOpenVaultCard({
     setCollateralAmount(formatCsprAmount(maxAmount));
   };
 
+  // Calculate max borrowable gUSD based on current collateral at MCR
+  const handleMaxBorrow = () => {
+    if (!collateralAmount || !collateralPrice) return;
+    try {
+      const collateralWei = BigInt(Math.floor(parseFloat(collateralAmount) * 1e9)) * BigInt(1e9);
+      const collateralValue = (collateralWei * collateralPrice) / BigInt(1e18);
+      // Max borrow = collateralValue / MCR (110%)
+      const maxBorrow = (collateralValue * BigInt(10000)) / BigInt(CDP_CONSTANTS.MCR_BPS);
+      setBorrowAmount(formatGusdAmount(maxBorrow));
+    } catch {
+      // Invalid input, ignore
+    }
+  };
+
   // CR color
   const getCrColor = (crBps: number) => {
     if (crBps >= 20000) return 'text-green-600';
@@ -169,7 +183,21 @@ export function CdpOpenVaultCard({
 
         {/* Borrow Input */}
         <Input
-          label="Borrow Amount"
+          label={
+            <div className="flex items-center justify-between w-full">
+              <span>Borrow Amount</span>
+              {isConnected && collateralAmount && (
+                <button
+                  type="button"
+                  onClick={handleMaxBorrow}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                  disabled={isProcessing}
+                >
+                  MAX
+                </button>
+              )}
+            </div>
+          }
           type="text"
           inputMode="decimal"
           placeholder="0.0"
