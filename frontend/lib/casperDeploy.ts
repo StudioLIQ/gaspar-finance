@@ -78,12 +78,12 @@ export interface SignedDeploy {
 
 /**
  * Load proxy_caller.wasm from public directory
- * Returns the WASM bytes as a base64 string for the deploy session
+ * Returns the WASM bytes as a hex string for the deploy session
  */
 export async function loadProxyCallerWasm(): Promise<string> {
   // Return cached if available
   if (proxyCallerWasmCache) {
-    return uint8ArrayToBase64(proxyCallerWasmCache);
+    return uint8ArrayToHex(proxyCallerWasmCache);
   }
 
   // Fetch the WASM file
@@ -95,18 +95,18 @@ export async function loadProxyCallerWasm(): Promise<string> {
   const arrayBuffer = await response.arrayBuffer();
   proxyCallerWasmCache = new Uint8Array(arrayBuffer);
 
-  return uint8ArrayToBase64(proxyCallerWasmCache);
+  return uint8ArrayToHex(proxyCallerWasmCache);
 }
 
 /**
- * Convert Uint8Array to base64 string
+ * Convert Uint8Array to hex string
  */
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = '';
+function uint8ArrayToHex(bytes: Uint8Array): string {
+  let hex = '';
   for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+    hex += bytes[i].toString(16).padStart(2, '0');
   }
-  return btoa(binary);
+  return hex;
 }
 
 /**
