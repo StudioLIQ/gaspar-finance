@@ -23,9 +23,10 @@ build:
 
 # Build WASM artifacts for deployment
 wasm:
-	$(CARGO) build --release --target wasm32-unknown-unknown -p cspr-cdp-contracts
+	$(CARGO) build --release --target wasm32-unknown-unknown -p cspr-cdp-contracts --lib
 	@mkdir -p $(WASM_DIR)
 	@cp $(TARGET_DIR)/wasm32-unknown-unknown/release/*.wasm $(WASM_DIR)/ 2>/dev/null || true
+	@cp $(TARGET_DIR)/wasm32-unknown-unknown/release/deps/cspr_cdp_contracts.wasm $(WASM_DIR)/cspr_cdp_contracts.wasm 2>/dev/null || true
 	@echo "WASM artifacts copied to $(WASM_DIR)/"
 	@ls -la $(WASM_DIR)/*.wasm 2>/dev/null || echo "No WASM files found"
 

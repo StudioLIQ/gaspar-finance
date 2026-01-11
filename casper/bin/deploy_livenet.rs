@@ -38,6 +38,13 @@ fn main() {
     // Initialize Odra livenet environment
     let env = odra_casper_livenet_env::env();
 
+    // Configure payment amount for deployments/calls (required for Casper 2.0 txs)
+    let payment_amount: u64 = std::env::var("ODRA_CASPER_LIVENET_PAYMENT_AMOUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200_000_000_000);
+    env.set_gas(payment_amount);
+
     // Get deployer address
     let deployer = env.caller();
     println!("Deployer: {:?}", deployer);

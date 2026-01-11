@@ -30,10 +30,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $1" >&2; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; exit 1; }
 
 # =============================================================================
 # Configuration
@@ -122,6 +122,11 @@ done
 
 log_success "All prerequisites OK"
 echo ""
+
+# Strip any non-JSON preamble from casper-client output (e.g. warnings).
+json_only() {
+    printf '%s\n' "$1" | sed -n '/^[[:space:]]*[{[]/,$p'
+}
 
 # =============================================================================
 # Helper Functions
@@ -279,23 +284,27 @@ wait_for_txn() {
 
     while [ $attempts -lt $max_attempts ]; do
         local result
-        result=$(casper-client get-deploy \
+        result=$(casper-client get-transaction \
             --node-address "$NODE_ADDRESS" \
             "$deploy_hash" 2>/dev/null || echo "{}")
-
-        # Check for success
-        local success
-        success=$(echo "$result" | jq -r '.result.execution_results[0].result.Success // empty')
-        if [ -n "$success" ]; then
-            log_success "Transaction successful"
-            return 0
+        local result_json
+        result_json=$(json_only "$result")
+        if [ -z "$result_json" ]; then
+            attempts=$((attempts + 1))
+            sleep "$sleep_secs"
+            continue
         fi
 
-        # Check for failure
-        local failure
-        failure=$(echo "$result" | jq -r '.result.execution_results[0].result.Failure // empty')
-        if [ -n "$failure" ]; then
-            log_error "Transaction failed: $(echo "$result" | jq -r '.result.execution_results[0].result.Failure.error_message // "unknown"')"
+        local has_exec
+        has_exec=$(echo "$result_json" | jq -r '.result.execution_info.execution_result != null')
+        if [ "$has_exec" = "true" ]; then
+            local error_message
+            error_message=$(echo "$result_json" | jq -r '.result.execution_info.execution_result.Version2.error_message // .result.execution_info.execution_result.Version1.error_message // empty')
+            if [ -n "$error_message" ] && [ "$error_message" != "null" ]; then
+                log_error "Transaction failed: $error_message"
+            fi
+            log_success "Transaction successful"
+            return 0
         fi
 
         attempts=$((attempts + 1))
@@ -309,25 +318,14 @@ wait_for_txn() {
 extract_contract_hash() {
     local deploy_hash="$1"
     local result
-    result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
+    result=$(casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash")
+    result=$(json_only "$result")
 
-    # Try to get AddressableEntity (Casper 2.0)
-    local entity_hash
-    entity_hash=$(echo "$result" | jq -r '
-        .result.execution_results[0].result.Success.effects[]
-        | select(.kind == "Write" and .key | startswith("addressable-entity-"))
-        | .key' 2>/dev/null | head -n 1)
-
-    if [ -n "$entity_hash" ] && [ "$entity_hash" != "null" ]; then
-        echo "$entity_hash"
-        return
-    fi
-
-    # Fallback: Try legacy contract hash
+    # Prefer explicit Contract write (Casper 2.0)
     local contract_hash
     contract_hash=$(echo "$result" | jq -r '
-        .result.execution_results[0].result.Success.effect.transforms[]
-        | select(.transform.WriteContract != null)
+        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | select((.kind | type) == "object" and .kind.Write.Contract != null)
         | .key' 2>/dev/null | head -n 1)
 
     if [ -n "$contract_hash" ] && [ "$contract_hash" != "null" ]; then
@@ -335,10 +333,22 @@ extract_contract_hash() {
         return
     fi
 
-    # Try entity-contract format
+    # Fallback: AddressableEntity
+    local entity_hash
+    entity_hash=$(echo "$result" | jq -r '
+        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | select((.kind | type) == "object" and .kind.Write != null and (.key | startswith("addressable-entity-")))
+        | .key' 2>/dev/null | head -n 1)
+
+    if [ -n "$entity_hash" ] && [ "$entity_hash" != "null" ]; then
+        echo "$entity_hash"
+        return
+    fi
+
+    # Last resort: any hash-like key
     contract_hash=$(echo "$result" | jq -r '
-        .result.execution_results[0].result.Success.effects[]
-        | select(.kind == "Write" and (.key | startswith("entity-contract-") or startswith("hash-")))
+        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | select((.kind | type) == "object" and .kind.Write != null and (.key | startswith("hash-") or startswith("entity-contract-")))
         | .key' 2>/dev/null | head -n 1)
 
     echo "$contract_hash"
@@ -346,14 +356,16 @@ extract_contract_hash() {
 
 # Deploy a contract
 deploy_contract() {
-    local name="$1"
-    local wasm="$2"
-    shift 2
+    local state_key="$1"
+    local module_name="$2"
+    local wasm="$3"
+    local entrypoint="$4"
+    shift 4
     local args=("$@")
 
-    echo ""
+    echo "" >&2
     log_info "=========================================="
-    log_info "Deploying: $name"
+    log_info "Deploying: $module_name"
     log_info "WASM: $wasm"
     log_info "=========================================="
 
@@ -363,7 +375,7 @@ deploy_contract() {
         --chain-name "$CHAIN_NAME"
         --secret-key "$SECRET_KEY"
         --wasm-path "$WASM_DIR/$wasm"
-        --session-entry-point "call"
+        --session-entry-point "$entrypoint"
         --pricing-mode classic
         --gas-price-tolerance "$GAS_PRICE_TOL"
         --payment-amount "$PAYMENT_AMOUNT"
@@ -372,7 +384,20 @@ deploy_contract() {
         --ttl "$TTL"
     )
 
-    # Add session args
+    # Odra deployment config args (required by odra-casper-wasm-env)
+    local package_hash_key_name="${module_name}_package_hash"
+    local odra_args=(
+        "odra_cfg_is_upgradable:bool='true'"
+        "odra_cfg_is_upgrade:bool='false'"
+        "odra_cfg_allow_key_override:bool='true'"
+        "odra_cfg_package_hash_key_name:string='$package_hash_key_name'"
+    )
+
+    for arg in "${odra_args[@]}"; do
+        cmd+=(--session-arg "$arg")
+    done
+
+    # Add contract init args
     for arg in "${args[@]}"; do
         cmd+=(--session-arg "$arg")
     done
@@ -383,10 +408,15 @@ deploy_contract() {
     output=$("${cmd[@]}" 2>&1)
 
     local deploy_hash
-    deploy_hash=$(echo "$output" | jq -r '.result.transaction_hash // .result.deploy_hash // empty')
+    local output_json
+    output_json=$(json_only "$output")
+    if [ -z "$output_json" ]; then
+        log_error "Failed to parse casper-client output. Output: $output"
+    fi
+    deploy_hash=$(echo "$output_json" | jq -r '.result.transaction_hash.Version1 // .result.transaction_hash // .result.deploy_hash // empty')
 
     if [ -z "$deploy_hash" ]; then
-        log_error "Failed to get deploy hash. Output: $output"
+        log_error "Failed to get deploy hash. Output: $output_json"
     fi
 
     log_info "Deploy hash: $deploy_hash"
@@ -397,17 +427,17 @@ deploy_contract() {
 
     if [ -z "$contract_hash" ] || [ "$contract_hash" = "null" ]; then
         log_warn "Could not extract contract hash automatically"
-        log_warn "Please check the deploy manually: casper-client get-deploy --node-address $NODE_ADDRESS $deploy_hash"
+        log_warn "Please check the deploy manually: casper-client get-transaction --node-address $NODE_ADDRESS $deploy_hash"
         # For debugging, print the full result
-        casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash" | jq '.result.execution_results[0].result.Success.effects' 2>/dev/null || true
+        casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash" | jq '.result.execution_info.execution_result' 2>/dev/null || true
         read -p "Enter contract hash manually (or press Enter to abort): " contract_hash
         if [ -z "$contract_hash" ]; then
             log_error "Aborting deployment"
         fi
     fi
 
-    save_contract "$name" "$contract_hash" "$deploy_hash"
-    log_success "$name deployed: $contract_hash"
+    save_contract "$state_key" "$contract_hash" "$deploy_hash"
+    log_success "$module_name deployed: $contract_hash"
 
     echo "$contract_hash"
 }
@@ -460,10 +490,15 @@ call_contract() {
     output=$("${cmd[@]}" 2>&1)
 
     local deploy_hash
-    deploy_hash=$(echo "$output" | jq -r '.result.transaction_hash // .result.deploy_hash // empty')
+    local output_json
+    output_json=$(json_only "$output")
+    if [ -z "$output_json" ]; then
+        log_error "Failed to parse casper-client output. Output: $output"
+    fi
+    deploy_hash=$(echo "$output_json" | jq -r '.result.transaction_hash.Version1 // .result.transaction_hash // .result.deploy_hash // empty')
 
     if [ -z "$deploy_hash" ]; then
-        log_error "Failed to get deploy hash. Output: $output"
+        log_error "Failed to get deploy hash. Output: $output_json"
     fi
 
     log_info "Deploy hash: $deploy_hash"
@@ -492,11 +527,11 @@ main() {
     log_info "=== Phase 1: Independent Contracts ==="
 
     # 1. AccessControl
-    ACCESS_CONTROL_HASH=$(deploy_contract "AccessControl" "AccessControl.wasm" \
+    ACCESS_CONTROL_HASH=$(deploy_contract "accessControl" "AccessControl" "AccessControl.wasm" "call" \
         "initial_admin:key='${DEPLOYER}'")
 
     # 2. Registry
-    REGISTRY_HASH=$(deploy_contract "Registry" "Registry.wasm" \
+    REGISTRY_HASH=$(deploy_contract "registry" "Registry" "Registry.wasm" "call" \
         "admin:key='$DEPLOYER'" \
         "mcr_bps:u32='$MCR_BPS'" \
         "min_debt:u256='$MIN_DEBT'" \
@@ -507,7 +542,7 @@ main() {
         "interest_max_bps:u32='$INTEREST_MAX_BPS'")
 
     # 3. ScsprYbToken
-    SCSPR_YBTOKEN_HASH=$(deploy_contract "ScsprYbToken" "ScsprYbToken.wasm" \
+    SCSPR_YBTOKEN_HASH=$(deploy_contract "scsprYbToken" "ScsprYbToken" "ScsprYbToken.wasm" "call" \
         "admin:key='$DEPLOYER'" \
         "operator:key='$DEPLOYER'")
 
@@ -518,24 +553,24 @@ main() {
     log_info "=== Phase 2: Registry-dependent Contracts ==="
 
     # 4. WithdrawQueue
-    WITHDRAW_QUEUE_HASH=$(deploy_contract "WithdrawQueue" "WithdrawQueue.wasm" \
+    WITHDRAW_QUEUE_HASH=$(deploy_contract "withdrawQueue" "WithdrawQueue" "WithdrawQueue.wasm" "call" \
         "ybtoken:key='$SCSPR_YBTOKEN_HASH'" \
         "admin:key='$DEPLOYER'")
 
     # 5. Router
-    ROUTER_HASH=$(deploy_contract "Router" "Router.wasm" \
+    ROUTER_HASH=$(deploy_contract "router" "Router" "Router.wasm" "call" \
         "registry:key='$REGISTRY_HASH'")
 
     # 6. CsprUsd (Stablecoin)
-    STABLECOIN_HASH=$(deploy_contract "CsprUsd" "CsprUsd.wasm" \
+    STABLECOIN_HASH=$(deploy_contract "stablecoin" "CsprUsd" "CsprUsd.wasm" "call" \
         "registry:key='$REGISTRY_HASH'")
 
     # 7. TokenAdapter
-    TOKEN_ADAPTER_HASH=$(deploy_contract "TokenAdapter" "TokenAdapter.wasm" \
+    TOKEN_ADAPTER_HASH=$(deploy_contract "tokenAdapter" "TokenAdapter" "TokenAdapter.wasm" "call" \
         "registry:key='$REGISTRY_HASH'")
 
     # 8. OracleAdapter
-    ORACLE_HASH=$(deploy_contract "OracleAdapter" "OracleAdapter.wasm" \
+    ORACLE_HASH=$(deploy_contract "oracleAdapter" "OracleAdapter" "OracleAdapter.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'")
 
@@ -546,18 +581,18 @@ main() {
     log_info "=== Phase 3: Branch Contracts ==="
 
     # 9. BranchCspr
-    BRANCH_CSPR_HASH=$(deploy_contract "BranchCspr" "BranchCspr.wasm" \
+    BRANCH_CSPR_HASH=$(deploy_contract "branchCspr" "BranchCspr" "BranchCspr.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'")
 
     # 10. BranchSCSPR
-    BRANCH_SCSPR_HASH=$(deploy_contract "BranchSCSPR" "BranchScspr.wasm" \
+    BRANCH_SCSPR_HASH=$(deploy_contract "branchSCSPR" "BranchSCSPR" "BranchScspr.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'" \
         "scspr_token:key='$SCSPR_YBTOKEN_HASH'")
 
     # 11. Treasury
-    TREASURY_HASH=$(deploy_contract "Treasury" "Treasury.wasm" \
+    TREASURY_HASH=$(deploy_contract "treasury" "Treasury" "Treasury.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "stablecoin:key='$STABLECOIN_HASH'")
 
@@ -568,21 +603,21 @@ main() {
     log_info "=== Phase 4: Engines ==="
 
     # 12. LiquidationEngine (with Router as placeholder for stability_pool)
-    LIQUIDATION_ENGINE_HASH=$(deploy_contract "LiquidationEngine" "LiquidationEngine.wasm" \
+    LIQUIDATION_ENGINE_HASH=$(deploy_contract "liquidationEngine" "LiquidationEngine" "LiquidationEngine.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'" \
         "stability_pool:key='$ROUTER_HASH'" \
         "oracle:key='$ORACLE_HASH'")
 
     # 13. StabilityPool
-    STABILITY_POOL_HASH=$(deploy_contract "StabilityPool" "StabilityPool.wasm" \
+    STABILITY_POOL_HASH=$(deploy_contract "stabilityPool" "StabilityPool" "StabilityPool.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'" \
         "stablecoin:key='$STABLECOIN_HASH'" \
         "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'")
 
     # 14. RedemptionEngine
-    REDEMPTION_ENGINE_HASH=$(deploy_contract "RedemptionEngine" "RedemptionEngine.wasm" \
+    REDEMPTION_ENGINE_HASH=$(deploy_contract "redemptionEngine" "RedemptionEngine" "RedemptionEngine.wasm" "call" \
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'" \
         "stablecoin:key='$STABLECOIN_HASH'" \

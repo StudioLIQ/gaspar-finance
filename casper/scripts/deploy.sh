@@ -114,6 +114,11 @@ INTEREST_MAX_BPS="${INTEREST_MAX_BPS:-4000}"
 
 ACCOUNT_HASH=$(casper-client account-address --public-key "$PUBLIC_KEY")
 
+json_only() {
+  # Strip any non-JSON preamble from casper-client output (e.g. warnings).
+  printf '%s\n' "$1" | sed -n '/^[[:space:]]*[{[]/,$p'
+}
+
 echo "=== CSPR-CDP Automated Deployment ==="
 echo "Network: $NETWORK"
 echo "Node: $NODE_ADDRESS"
@@ -189,18 +194,25 @@ wait_for_deploy() {
   while [ $attempts -lt $max_attempts ]; do
     local result
     result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash" 2>/dev/null || true)
+    local result_json
+    result_json=$(json_only "$result")
+    if [ -z "$result_json" ]; then
+      attempts=$((attempts + 1))
+      sleep "$sleep_secs"
+      continue
+    fi
 
     local success
-    success=$(echo "$result" | jq -r '.result.execution_results[0].result.Success // empty')
+    success=$(echo "$result_json" | jq -r '.result.execution_results[0].result.Success // empty')
     if [ -n "$success" ]; then
       return 0
     fi
 
     local failure
-    failure=$(echo "$result" | jq -r '.result.execution_results[0].result.Failure // empty')
+    failure=$(echo "$result_json" | jq -r '.result.execution_results[0].result.Failure // empty')
     if [ -n "$failure" ]; then
       echo "ERROR: deploy failed: $deploy_hash"
-      echo "$result" | jq '.result.execution_results[0].result.Failure'
+      echo "$result_json" | jq '.result.execution_results[0].result.Failure'
       exit 1
     fi
 
@@ -216,6 +228,7 @@ extract_contract_hash() {
   local deploy_hash="$1"
   local result
   result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
+  result=$(json_only "$result")
   echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContract != null) | .key' | head -n 1
 }
 
@@ -223,6 +236,7 @@ extract_package_hash() {
   local deploy_hash="$1"
   local result
   result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
+  result=$(json_only "$result")
   echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContractPackage != null) | .key' | head -n 1
 }
 
@@ -264,19 +278,33 @@ install_contract() {
   local args=("$@")
 
   echo ""
-  echo "--- Installing $name ---"
+  echo "--- Installing $name ---" >&2
 
   local deploy_hash
-  deploy_hash=$(casper-client put-deploy \
+  local output
+  output=$(casper-client put-deploy \
     --node-address "$NODE_ADDRESS" \
     --chain-name "$CHAIN_NAME" \
     --secret-key "$SECRET_KEY" \
     --session-path "$WASM_FILE" \
     --session-entry-point "$entrypoint" \
     --payment-amount "$INSTALL_PAYMENT_AMOUNT" \
-    "${args[@]}" | jq -r '.result.deploy_hash')
+    "${args[@]}" 2>&1)
+  local output_json
+  output_json=$(json_only "$output")
+  if [ -z "$output_json" ]; then
+    echo "ERROR: failed to parse casper-client output for $name" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+  deploy_hash=$(echo "$output_json" | jq -r '.result.deploy_hash // .result.transaction_hash.Version1 // .result.transaction_hash // empty')
+  if [ -z "$deploy_hash" ]; then
+    echo "ERROR: failed to get deploy hash for $name" >&2
+    echo "$output_json" >&2
+    exit 1
+  fi
 
-  echo "Deploy hash: $deploy_hash"
+  echo "Deploy hash: $deploy_hash" >&2
   wait_for_deploy "$deploy_hash"
 
   local contract_hash
@@ -285,12 +313,12 @@ install_contract() {
   package_hash=$(extract_package_hash "$deploy_hash")
 
   if [ -z "$contract_hash" ] || [ "$contract_hash" = "null" ]; then
-    echo "ERROR: failed to extract contract hash for $name"
+    echo "ERROR: failed to extract contract hash for $name" >&2
     exit 1
   fi
 
   update_record "$name" "$deploy_hash" "$contract_hash" "$package_hash"
-  echo "✓ $name installed: $contract_hash"
+  echo "✓ $name installed: $contract_hash" >&2
 
   echo "$contract_hash"
 }
@@ -302,16 +330,30 @@ call_contract() {
   local args=("$@")
 
   local deploy_hash
-  deploy_hash=$(casper-client put-deploy \
+  local output
+  output=$(casper-client put-deploy \
     --node-address "$NODE_ADDRESS" \
     --chain-name "$CHAIN_NAME" \
     --secret-key "$SECRET_KEY" \
     --session-hash "$contract_hash" \
     --session-entry-point "$entrypoint" \
     --payment-amount "$CALL_PAYMENT_AMOUNT" \
-    "${args[@]}" | jq -r '.result.deploy_hash')
+    "${args[@]}" 2>&1)
+  local output_json
+  output_json=$(json_only "$output")
+  if [ -z "$output_json" ]; then
+    echo "ERROR: failed to parse casper-client output for call $entrypoint" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+  deploy_hash=$(echo "$output_json" | jq -r '.result.deploy_hash // .result.transaction_hash.Version1 // .result.transaction_hash // empty')
+  if [ -z "$deploy_hash" ]; then
+    echo "ERROR: failed to get deploy hash for call $entrypoint" >&2
+    echo "$output_json" >&2
+    exit 1
+  fi
 
-  echo "Deploy hash: $deploy_hash"
+  echo "Deploy hash: $deploy_hash" >&2
   wait_for_deploy "$deploy_hash"
 }
 
@@ -336,13 +378,13 @@ WITHDRAW_QUEUE_INIT_ENTRYPOINT="${WITHDRAW_QUEUE_INIT_ENTRYPOINT:-init}"
 # Step 3: Deploy contracts
 REGISTRY_HASH=$(install_contract "registry" "$REGISTRY_INIT_ENTRYPOINT" \
   --session-arg "admin:key='$ACCOUNT_HASH'" \
-  --session-arg "mcr_bps:u32=$MCR_BPS" \
-  --session-arg "min_debt:u256=$MIN_DEBT" \
-  --session-arg "borrowing_fee_bps:u32=$BORROWING_FEE_BPS" \
-  --session-arg "redemption_fee_bps:u32=$REDEMPTION_FEE_BPS" \
-  --session-arg "liquidation_penalty_bps:u32=$LIQUIDATION_PENALTY_BPS" \
-  --session-arg "interest_min_bps:u32=$INTEREST_MIN_BPS" \
-  --session-arg "interest_max_bps:u32=$INTEREST_MAX_BPS")
+  --session-arg "mcr_bps:u32='$MCR_BPS'" \
+  --session-arg "min_debt:u256='$MIN_DEBT'" \
+  --session-arg "borrowing_fee_bps:u32='$BORROWING_FEE_BPS'" \
+  --session-arg "redemption_fee_bps:u32='$REDEMPTION_FEE_BPS'" \
+  --session-arg "liquidation_penalty_bps:u32='$LIQUIDATION_PENALTY_BPS'" \
+  --session-arg "interest_min_bps:u32='$INTEREST_MIN_BPS'" \
+  --session-arg "interest_max_bps:u32='$INTEREST_MAX_BPS'")
 
 ROUTER_HASH=$(install_contract "router" "$ROUTER_INIT_ENTRYPOINT" \
   --session-arg "registry:key='$REGISTRY_HASH'")
@@ -467,7 +509,7 @@ if [ "$DEPLOY_LST" = "true" ] && [ -n "$YBTOKEN_HASH" ]; then
   echo "--- Initial rate sync ---"
   INITIAL_RATE="1000000000000000000"  # 1e18 = 1.0
   call_contract "$ORACLE_HASH" "sync_rate_from_ybtoken" \
-    --session-arg "rate:u256=$INITIAL_RATE"
+    --session-arg "rate:u256='$INITIAL_RATE'"
   echo "✓ Initial exchange rate synced (R = 1.0)"
 fi
 
@@ -481,14 +523,14 @@ call_contract "$REGISTRY_HASH" "set_liquidation_engine" --session-arg "liquidati
 
 call_contract "$REGISTRY_HASH" "register_branch_cspr" \
   --session-arg "branch:key='$BRANCH_CSPR_HASH'" \
-  --session-arg "decimals:u8=$CSPR_DECIMALS" \
-  --session-arg "mcr_bps:u32=$MCR_BPS"
+  --session-arg "decimals:u8='$CSPR_DECIMALS'" \
+  --session-arg "mcr_bps:u32='$MCR_BPS'"
 
 call_contract "$REGISTRY_HASH" "register_branch_scspr" \
   --session-arg "branch:key='$BRANCH_SCSPR_HASH'" \
   --session-arg "token_address:key='$SCSPR_TOKEN_HASH'" \
-  --session-arg "decimals:u8=$SCSPR_DECIMALS" \
-  --session-arg "mcr_bps:u32=$MCR_BPS"
+  --session-arg "decimals:u8='$SCSPR_DECIMALS'" \
+  --session-arg "mcr_bps:u32='$MCR_BPS'"
 
 # Patch circular dependency (requires contract entrypoints)
 call_contract "$LIQUIDATION_ENGINE_HASH" "set_stability_pool" --session-arg "stability_pool:key='$STABILITY_POOL_HASH'"
