@@ -8,6 +8,7 @@ import {
   getUserWithdrawRequests,
   getLstProtocolStats,
   getAccountCsprBalance,
+  getContractPackageHash,
   refreshUnbondingPeriodFromChain,
   getUnbondingPeriod,
   getUnbondingPeriodDisplay,
@@ -272,10 +273,16 @@ export function useLst(): LstState & LstActions {
       }
 
       // Payable calls via proxy caller require the contract *package* hash.
-      const ybTokenPackageHash = CONTRACTS.scsprYbtokenPackage;
+      let ybTokenPackageHash = CONTRACTS.scsprYbtokenPackage;
+      if (!ybTokenPackageHash || ybTokenPackageHash === 'null') {
+        const ybTokenHash = CONTRACTS.scsprYbtoken;
+        if (ybTokenHash && ybTokenHash !== 'null') {
+          ybTokenPackageHash = await getContractPackageHash(ybTokenHash);
+        }
+      }
       if (!ybTokenPackageHash || ybTokenPackageHash === 'null') {
         setTxError(
-          'Missing ybToken package hash. Re-run ./casper/scripts/bind-frontend.sh or set NEXT_PUBLIC_SCSPR_YBTOKEN_PACKAGE_HASH.'
+          'Missing ybToken package hash (config and on-chain lookup). Re-run ./casper/scripts/bind-frontend.sh or set NEXT_PUBLIC_SCSPR_YBTOKEN_PACKAGE_HASH.'
         );
         return false;
       }

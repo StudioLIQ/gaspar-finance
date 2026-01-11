@@ -435,6 +435,20 @@ export async function getContractNamedKeys(
   return namedKeys;
 }
 
+// Get contract's package hash from contract hash
+export async function getContractPackageHash(contractHash: string): Promise<string | null> {
+  const normalizedHash = contractHash.startsWith('hash-')
+    ? contractHash
+    : `hash-${contractHash}`;
+
+  const stored = await queryGlobalState(normalizedHash);
+  if (!stored?.Contract?.contract_package_hash) {
+    return null;
+  }
+
+  return stored.Contract.contract_package_hash;
+}
+
 // Query a value by named_key name from a contract
 export async function queryContractNamedKey(
   contractHash: string,

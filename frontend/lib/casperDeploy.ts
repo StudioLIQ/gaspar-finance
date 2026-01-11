@@ -210,8 +210,8 @@ export function buildProxyCallerDeploy(
   const network = getNetworkConfig();
   const now = Date.now();
 
-  // Normalize contract package hash format (remove 'hash-' prefix if present)
-  const packageHashClean = params.contractPackageHash.replace(/^hash-/, '');
+  // Normalize contract package hash format (remove known prefixes if present)
+  const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
 
   // Odra proxy_caller expects these session args:
   // - contract_package_hash: AccountHash/ContractPackageHash (32 bytes)
