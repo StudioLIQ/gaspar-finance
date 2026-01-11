@@ -15,6 +15,7 @@ import {
   getRedemptionStats,
   getGusdBalance,
   formatGusdAmount,
+  getCollateralPrice,
 } from '@/lib/casperRpc';
 
 // Refresh interval for polling data
@@ -34,13 +35,18 @@ export interface RedemptionQuote {
   // Collateral to receive (after fee)
   collateralAmount: bigint;
   collateralFormatted: string;
-  // Fee amount
+  // Fee amount in collateral
   feeAmount: bigint;
   feeFormatted: string;
   // Fee in basis points
   feeBps: number;
-  // Exchange rate used
-  exchangeRate: bigint;
+  // Collateral price in USD (18 decimals)
+  collateralPrice: bigint;
+  // USD value of collateral received (18 decimals)
+  valueUsd: bigint;
+  valueUsdFormatted: string;
+  // Collateral type
+  collateralType: CollateralType;
 }
 
 // Redemption stats
@@ -112,6 +118,9 @@ export function useRedemption(): RedemptionState & RedemptionActions {
   const [txStatus, setTxStatus] = useState<TxStatus>('idle');
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  // Collateral prices (18 decimals)
+  const [csprPrice, setCsprPrice] = useState<bigint>(BigInt('20000000000000000')); // $0.02 default
+  const [scsprPrice, setScsprPrice] = useState<bigint>(BigInt('20000000000000000')); // $0.02 default
 
   // Computed
   const userGusdBalanceFormatted = userGusdBalance !== null ? formatGusdAmount(userGusdBalance) : null;
@@ -126,8 +135,16 @@ export function useRedemption(): RedemptionState & RedemptionActions {
     setIsRefreshing(true);
 
     try {
-      // Fetch redemption stats from chain
-      const chainStats = await getRedemptionStats();
+      // Fetch collateral prices and redemption stats in parallel
+      const [csprPriceData, scsprPriceData, chainStats] = await Promise.all([
+        getCollateralPrice('cspr'),
+        getCollateralPrice('scspr'),
+        getRedemptionStats(),
+      ]);
+
+      setCsprPrice(csprPriceData);
+      setScsprPrice(scsprPriceData);
+
       if (chainStats) {
         const statsData: RedemptionStats = {
           baseFeeBps: chainStats.baseFee,
@@ -193,19 +210,27 @@ export function useRedemption(): RedemptionState & RedemptionActions {
       // Get current fee
       const feeBps = stats?.baseFeeBps ?? PROTOCOL_PARAMS.REDEMPTION_BASE_FEE_BPS;
 
-      // Placeholder: Assume 1:1 exchange rate for simplicity
-      // In production, query oracle for actual price
-      const exchangeRate = BigInt('1000000000000000000'); // 1e18 = $1.00
+      // Get actual collateral price (18 decimals)
+      const collateralPrice = collateralType === 'CSPR' ? csprPrice : scsprPrice;
 
-      // Calculate collateral before fee
-      // collateral = gusd * 1e18 / price
-      // For CSPR (9 decimals), we need to convert from 1e18 gUSD to 1e9 CSPR
-      const scale = BigInt('1000000000'); // 1e9
-      const collateralBeforeFee = (gusdMotes * scale) / exchangeRate;
+      // Calculate collateral amount before fee
+      // Redemption gives you $1 worth of collateral per gUSD (minus fee)
+      // collateral = gusdValue / collateralPrice
+      // gusdMotes is 1e18 scale, collateralPrice is 1e18 scale
+      // Result needs to be 1e9 scale (CSPR decimals)
+      // collateral = gusdMotes * 1e9 / collateralPrice
+      const CSPR_DECIMALS = BigInt('1000000000'); // 1e9
+      const collateralBeforeFee = (gusdMotes * CSPR_DECIMALS) / collateralPrice;
 
-      // Calculate fee
+      // Calculate fee in collateral terms
       const feeAmount = (collateralBeforeFee * BigInt(feeBps)) / BigInt(10000);
       const collateralAfterFee = collateralBeforeFee - feeAmount;
+
+      // Calculate USD value of collateral received (18 decimals)
+      // valueUsd = collateralAfterFee * collateralPrice / 1e9
+      const valueUsd = (collateralAfterFee * collateralPrice) / CSPR_DECIMALS;
+      const valueUsdNum = Number(valueUsd) / 1e18;
+      const valueUsdFormatted = `$${valueUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
       return {
         gusdAmount: gusdMotes,
@@ -215,10 +240,13 @@ export function useRedemption(): RedemptionState & RedemptionActions {
         feeAmount,
         feeFormatted: formatCsprAmount(feeAmount),
         feeBps,
-        exchangeRate,
+        collateralPrice,
+        valueUsd,
+        valueUsdFormatted,
+        collateralType,
       };
     },
-    [stats]
+    [stats, csprPrice, scsprPrice]
   );
 
   // Execute redemption

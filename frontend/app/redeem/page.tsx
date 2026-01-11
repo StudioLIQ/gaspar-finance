@@ -54,20 +54,30 @@ function CollateralSelector({
 function QuoteDisplay({ quote }: { quote: RedemptionQuote | null }) {
   if (!quote) return null;
 
+  const priceUsd = Number(quote.collateralPrice) / 1e18;
+
   return (
     <div className="bg-gray-50 rounded-lg p-4 space-y-2">
       <div className="flex justify-between text-sm">
         <span className="text-gray-600">You will receive:</span>
-        <span className="font-medium text-gray-900">{quote.collateralFormatted}</span>
+        <span className="font-medium text-gray-900">
+          {quote.collateralFormatted} {quote.collateralType}
+        </span>
+      </div>
+      <div className="flex justify-between text-sm">
+        <span className="text-gray-600">Value:</span>
+        <span className="font-medium text-green-600">{quote.valueUsdFormatted}</span>
       </div>
       <div className="flex justify-between text-sm">
         <span className="text-gray-600">Fee ({(quote.feeBps / 100).toFixed(2)}%):</span>
-        <span className="text-gray-600">{quote.feeFormatted}</span>
+        <span className="text-gray-600">
+          {quote.feeFormatted} {quote.collateralType}
+        </span>
       </div>
       <div className="border-t border-gray-200 pt-2 mt-2">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-600">Exchange rate:</span>
-          <span className="text-gray-600">1 gUSD = $1.00</span>
+          <span className="text-gray-600">{quote.collateralType} Price:</span>
+          <span className="text-gray-600">${priceUsd.toFixed(6)}</span>
         </div>
       </div>
     </div>
