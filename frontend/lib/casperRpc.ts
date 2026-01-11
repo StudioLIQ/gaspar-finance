@@ -154,14 +154,29 @@ const ODRA_FIELD_INDEX = {
   SP_TOTAL_SCSPR_COLLATERAL: 8,
   SP_TOTAL_DEBT_ABSORBED: 9,
   SP_DEPOSITOR_COUNT: 10,
+  SP_PS_STATE: 11,
+  SP_EPOCH_SCALE_SUM_CSPR: 12,
+  SP_EPOCH_SCALE_SUM_SCSPR: 13,
+  SP_DEPOSITS: 14,  // Mapping<Address, DepositSnapshot>
   SP_SAFE_MODE: 15,
 
   // BranchCspr: registry(1), router(2), vaults(3), sorted_vaults(4), sorted_head(5), sorted_tail(6),
   // total_collateral(7), total_debt(8), vault_count(9), safe_mode(10), last_good_price(11), ...
+  BRANCH_VAULTS: 3,  // Mapping<Address, VaultData>
   BRANCH_TOTAL_COLLATERAL: 7,
   BRANCH_TOTAL_DEBT: 8,
   BRANCH_VAULT_COUNT: 9,
   BRANCH_SAFE_MODE: 10,
+
+  // RedemptionEngine: registry(1), router(2), stablecoin(3), treasury(4), styks_oracle(5),
+  // scspr_ybtoken(6), branch_cspr(7), branch_scspr(8), scspr_token(9),
+  // base_fee_bps(10), max_fee_bps(11), total_redeemed(12), total_collateral_distributed(13),
+  // total_fees_collected(14), safe_mode(15)
+  RE_BASE_FEE_BPS: 10,
+  RE_MAX_FEE_BPS: 11,
+  RE_TOTAL_REDEEMED: 12,
+  RE_TOTAL_COLLATERAL_DISTRIBUTED: 13,
+  RE_TOTAL_FEES_COLLECTED: 14,
 
   // CsprUsd: name(1), symbol(2), decimals(3), total_supply(4), balances(5), ...
   GUSD_BALANCES: 5,
@@ -768,6 +783,90 @@ async function fetchOdraVarU64(contractHash: string, fieldIndex: number): Promis
 }
 
 /**
+ * Parse u32 from bytes (little-endian)
+ */
+function parseU32FromBytes(bytes: Uint8Array, offset: number = 0): number {
+  let result = 0;
+  for (let i = 0; i < 4 && offset + i < bytes.length; i++) {
+    result += bytes[offset + i] << (i * 8);
+  }
+  return result >>> 0; // Ensure unsigned
+}
+
+/**
+ * Fetch u32 value from Odra Var field
+ */
+async function fetchOdraVarU32(contractHash: string, fieldIndex: number): Promise<number> {
+  try {
+    const result = await queryOdraVarField(contractHash, fieldIndex);
+    if (!result) return 0;
+
+    const parsed = result.parsed;
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      return parseU32FromBytes(bytes, 0);
+    } else if (typeof parsed === 'number') {
+      return parsed;
+    } else if (parsed !== undefined && parsed !== null) {
+      return Number(parsed);
+    }
+
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      return parseU32FromBytes(bytes, 4);
+    }
+
+    return 0;
+  } catch (err) {
+    console.warn('[fetchOdraVarU32] Error:', err);
+    return 0;
+  }
+}
+
+/**
+ * Compute Odra dictionary key for Mapping<Address, T>
+ * Key = blake2b(field_index_u32_be || address_bytes)
+ */
+function computeOdraMappingKeyAddress(fieldIndex: number, address: Uint8Array): string {
+  // Field index as 4 bytes big endian
+  const indexBytes = new Uint8Array(4);
+  indexBytes[0] = (fieldIndex >> 24) & 0xff;
+  indexBytes[1] = (fieldIndex >> 16) & 0xff;
+  indexBytes[2] = (fieldIndex >> 8) & 0xff;
+  indexBytes[3] = fieldIndex & 0xff;
+
+  // Concatenate index + address
+  const combined = new Uint8Array(4 + address.length);
+  combined.set(indexBytes, 0);
+  combined.set(address, 4);
+
+  // Blake2b hash (32 bytes)
+  const hashedKey = blake2b(combined, undefined, 32);
+  return bytesToHex(hashedKey);
+}
+
+/**
+ * Query Odra Mapping field from contract state
+ */
+async function queryOdraMappingFieldAddress(
+  contractHash: string,
+  fieldIndex: number,
+  addressBytes: Uint8Array
+): Promise<{ bytes?: string; parsed?: unknown } | null> {
+  const dictionaryKey = computeOdraMappingKeyAddress(fieldIndex, addressBytes);
+  return queryOdraDictionaryItem(contractHash, dictionaryKey);
+}
+
+/**
+ * Convert public key to account hash bytes for Odra Mapping queries
+ */
+function publicKeyToAccountHash(publicKeyHex: string): Uint8Array | null {
+  const accountHashHex = computeAccountHashFromPublicKey(publicKeyHex);
+  if (!accountHashHex) return null;
+  return hexToBytes(accountHashHex);
+}
+
+/**
  * AssetBreakdown struct from ScsprYbToken
  * Fields: idle_cspr, delegated_cspr, undelegating_cspr, claimable_cspr, protocol_fees, realized_losses
  */
@@ -1194,8 +1293,37 @@ export interface StabilityPoolProtocolStats {
   isSafeModeActive: boolean;
 }
 
+/**
+ * DepositSnapshot struct from StabilityPool
+ * Fields: deposit(U256), p(U256), s_cspr(U256), s_scspr(U256), epoch(u64), scale(u64)
+ */
+interface DepositSnapshot {
+  deposit: bigint;
+  p: bigint;
+  sCspr: bigint;
+  sScspr: bigint;
+  epoch: bigint;
+  scale: bigint;
+}
+
+/**
+ * Parse DepositSnapshot from Odra bytes
+ */
+function parseDepositSnapshot(bytes: Uint8Array): DepositSnapshot {
+  // deposit(32) + p(32) + s_cspr(32) + s_scspr(32) + epoch(8) + scale(8) = 144 bytes
+  const offset = bytes.length > 144 ? bytes.length - 144 : 0;
+
+  return {
+    deposit: parseU256FromBytes(bytes, offset + 0),
+    p: parseU256FromBytes(bytes, offset + 32),
+    sCspr: parseU256FromBytes(bytes, offset + 64),
+    sScspr: parseU256FromBytes(bytes, offset + 96),
+    epoch: parseU64FromBytes(bytes, offset + 128),
+    scale: parseU64FromBytes(bytes, offset + 136),
+  };
+}
+
 // Get user's stability pool state (deposit + gains)
-// NOTE: Odra contracts can't be queried without entry point call
 export async function getStabilityPoolUserState(
   publicKey: string
 ): Promise<StabilityPoolUserState | null> {
@@ -1204,16 +1332,84 @@ export async function getStabilityPoolUserState(
     return null;
   }
 
-  console.debug('[RPC] getStabilityPoolUserState:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Get account hash from public key
+    const accountHash = publicKeyToAccountHash(publicKey);
+    if (!accountHash) {
+      console.warn('[RPC] getStabilityPoolUserState: Failed to compute account hash');
+      return null;
+    }
 
-  return {
-    deposit: BigInt(0),
-    depositFormatted: '0',
-    csprGains: BigInt(0),
-    csprGainsFormatted: '0',
-    scsprGains: BigInt(0),
-    scsprGainsFormatted: '0',
-  };
+    // Query deposits Mapping
+    const result = await queryOdraMappingFieldAddress(
+      spHash,
+      ODRA_FIELD_INDEX.SP_DEPOSITS,
+      accountHash
+    );
+
+    if (!result) {
+      // No deposit found
+      return {
+        deposit: BigInt(0),
+        depositFormatted: '0',
+        csprGains: BigInt(0),
+        csprGainsFormatted: '0',
+        scsprGains: BigInt(0),
+        scsprGainsFormatted: '0',
+      };
+    }
+
+    const parsed = result.parsed;
+    let snapshot: DepositSnapshot | null = null;
+
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      snapshot = parseDepositSnapshot(bytes);
+    } else if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip 4-byte length prefix
+      snapshot = parseDepositSnapshot(bytes.slice(4));
+    }
+
+    if (!snapshot || snapshot.deposit === BigInt(0)) {
+      return {
+        deposit: BigInt(0),
+        depositFormatted: '0',
+        csprGains: BigInt(0),
+        csprGainsFormatted: '0',
+        scsprGains: BigInt(0),
+        scsprGainsFormatted: '0',
+      };
+    }
+
+    console.log('[RPC] getStabilityPoolUserState:', {
+      deposit: snapshot.deposit.toString(),
+      p: snapshot.p.toString(),
+      sCspr: snapshot.sCspr.toString(),
+      sScspr: snapshot.sScspr.toString(),
+    });
+
+    // TODO: Calculate compounded deposit and gains using product-sum algorithm
+    // For now, return the snapshot deposit (gains calculation requires current P and S values)
+    return {
+      deposit: snapshot.deposit,
+      depositFormatted: formatGusdAmount(snapshot.deposit),
+      csprGains: BigInt(0), // Would need current P/S state to calculate
+      csprGainsFormatted: '0',
+      scsprGains: BigInt(0),
+      scsprGainsFormatted: '0',
+    };
+  } catch (err) {
+    console.warn('[RPC] getStabilityPoolUserState failed:', err);
+    return {
+      deposit: BigInt(0),
+      depositFormatted: '0',
+      csprGains: BigInt(0),
+      csprGainsFormatted: '0',
+      scsprGains: BigInt(0),
+      scsprGainsFormatted: '0',
+    };
+  }
 }
 
 // Get stability pool protocol stats
@@ -1284,26 +1480,63 @@ export interface RedemptionProtocolStats {
 }
 
 // Get redemption protocol stats
-// NOTE: Odra contracts can't be queried without entry point call
 export async function getRedemptionStats(): Promise<RedemptionProtocolStats | null> {
   const reHash = CONTRACTS.redemptionEngine;
   if (!reHash || reHash === 'null') {
     return null;
   }
 
-  console.debug('[RPC] getRedemptionStats:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Fetch all stats in parallel
+    const [
+      totalRedeemed,
+      totalCollateralDistributed,
+      totalFeesCollected,
+      baseFee,
+      maxFee,
+    ] = await Promise.all([
+      fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_REDEEMED),
+      fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_COLLATERAL_DISTRIBUTED),
+      fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_FEES_COLLECTED),
+      fetchOdraVarU32(reHash, ODRA_FIELD_INDEX.RE_BASE_FEE_BPS),
+      fetchOdraVarU32(reHash, ODRA_FIELD_INDEX.RE_MAX_FEE_BPS),
+    ]);
 
-  // Return default values - actual stats require entry point calls
-  return {
-    totalRedeemed: BigInt(0),
-    totalRedeemedFormatted: '0',
-    totalCollateralDistributed: BigInt(0),
-    totalFeesCollected: BigInt(0),
-    baseFee: 50, // 0.5% default
-    maxFee: 500, // 5% default
-    currentFee: 50,
-    isSafeModeActive: false,
-  };
+    console.log('[RPC] getRedemptionStats:', {
+      totalRedeemed: totalRedeemed.toString(),
+      totalCollateralDistributed: totalCollateralDistributed.toString(),
+      totalFeesCollected: totalFeesCollected.toString(),
+      baseFee,
+      maxFee,
+    });
+
+    // Use defaults if values are 0 (contract not initialized)
+    const actualBaseFee = baseFee || 50;
+    const actualMaxFee = maxFee || 500;
+
+    return {
+      totalRedeemed,
+      totalRedeemedFormatted: formatGusdAmount(totalRedeemed),
+      totalCollateralDistributed,
+      totalFeesCollected,
+      baseFee: actualBaseFee,
+      maxFee: actualMaxFee,
+      currentFee: actualBaseFee, // Current fee = base fee (dynamic calculation can be added)
+      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+    };
+  } catch (err) {
+    console.warn('[RPC] getRedemptionStats failed:', err);
+    return {
+      totalRedeemed: BigInt(0),
+      totalRedeemedFormatted: '0',
+      totalCollateralDistributed: BigInt(0),
+      totalFeesCollected: BigInt(0),
+      baseFee: 50,
+      maxFee: 500,
+      currentFee: 50,
+      isSafeModeActive: false,
+    };
+  }
 }
 
 // ========== gUSD Balance Query ==========
@@ -1379,8 +1612,48 @@ export interface BranchStatus {
   isSafeModeActive: boolean;
 }
 
+/**
+ * Parse VaultData from Odra bytes
+ * VaultData: owner(Address), collateral_id(enum), collateral(U256), debt(U256), interest_rate_bps(u32), last_accrual_timestamp(u64)
+ */
+function parseVaultData(bytes: Uint8Array, collateralType: CollateralType): VaultData | null {
+  // Odra Address: 1 byte tag + 32 bytes hash = 33 bytes
+  // CollateralId enum: 1 byte
+  // U256: 32 bytes each
+  // u32: 4 bytes
+  // u64: 8 bytes
+  // Total min: 33 + 1 + 32 + 32 + 4 + 8 = 110 bytes
+
+  if (bytes.length < 78) { // At minimum: collateral(32) + debt(32) + rate(4) + timestamp(8) + some prefix
+    return null;
+  }
+
+  // Try to parse from the end where numeric values should be
+  // Layout might be: [prefix/owner][collateral_id][collateral:32][debt:32][rate:4][timestamp:8]
+  const len = bytes.length;
+
+  // Parse from known offsets at the end
+  const lastAccrualTimestamp = Number(parseU64FromBytes(bytes, len - 8));
+  const interestRateBps = parseU32FromBytes(bytes, len - 12);
+  const debt = parseU256FromBytes(bytes, len - 44);
+  const collateral = parseU256FromBytes(bytes, len - 76);
+
+  // If collateral and debt are both 0, vault doesn't exist
+  if (collateral === BigInt(0) && debt === BigInt(0)) {
+    return null;
+  }
+
+  return {
+    owner: '', // Will be filled by caller
+    collateralId: collateralType,
+    collateral,
+    debt,
+    interestRateBps,
+    lastAccrualTimestamp,
+  };
+}
+
 // Get user's vault for a specific collateral type
-// NOTE: Odra contracts can't be queried without entry point call
 export async function getUserVault(
   publicKey: string,
   collateralType: CollateralType
@@ -1393,10 +1666,76 @@ export async function getUserVault(
     return null;
   }
 
-  console.debug('[RPC] getUserVault:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Get account hash from public key
+    const accountHash = publicKeyToAccountHash(publicKey);
+    if (!accountHash) {
+      console.warn('[RPC] getUserVault: Failed to compute account hash');
+      return null;
+    }
 
-  // Return null - no vault data available without entry point call
-  return null;
+    // Query vaults Mapping
+    const result = await queryOdraMappingFieldAddress(
+      branchHash,
+      ODRA_FIELD_INDEX.BRANCH_VAULTS,
+      accountHash
+    );
+
+    if (!result) {
+      // No vault found
+      return null;
+    }
+
+    const parsed = result.parsed;
+    let vaultData: VaultData | null = null;
+
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      vaultData = parseVaultData(bytes, collateralType);
+    } else if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip 4-byte length prefix
+      vaultData = parseVaultData(bytes.slice(4), collateralType);
+    }
+
+    if (!vaultData || (vaultData.collateral === BigInt(0) && vaultData.debt === BigInt(0))) {
+      return null;
+    }
+
+    vaultData.owner = publicKey;
+
+    console.log(`[RPC] getUserVault(${collateralType}):`, {
+      collateral: vaultData.collateral.toString(),
+      debt: vaultData.debt.toString(),
+      interestRateBps: vaultData.interestRateBps,
+    });
+
+    // Calculate ICR (Individual Collateralization Ratio)
+    // ICR = (collateral * price * 10000) / debt
+    const price = await getCollateralPrice(collateralType);
+    let icrBps = 0;
+    let collateralValueUsd = BigInt(0);
+
+    if (price > BigInt(0)) {
+      // collateral uses 9 decimals, price uses 18 decimals
+      // collateralValueUsd = collateral * price / 1e9
+      collateralValueUsd = (vaultData.collateral * price) / BigInt(10 ** 9);
+      if (vaultData.debt > BigInt(0)) {
+        icrBps = Number((collateralValueUsd * BigInt(10000)) / vaultData.debt);
+      } else {
+        icrBps = 999999; // Infinite ICR when no debt
+      }
+    }
+
+    return {
+      vault: vaultData,
+      icrBps,
+      collateralValueUsd,
+    };
+  } catch (err) {
+    console.warn(`[RPC] getUserVault(${collateralType}) failed:`, err);
+    return null;
+  }
 }
 
 // Get branch status for a collateral type
