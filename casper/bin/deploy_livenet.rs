@@ -15,7 +15,7 @@ use odra::prelude::*;
 
 use cspr_cdp_contracts::access_control::{AccessControl, AccessControlInitArgs};
 use cspr_cdp_contracts::branch_cspr::{BranchCspr, BranchCsprInitArgs};
-use cspr_cdp_contracts::branch_scspr::{BranchSCSPR, BranchSCSPRInitArgs};
+use cspr_cdp_contracts::branch_scspr::{BranchScspr, BranchScsprInitArgs};
 use cspr_cdp_contracts::liquidation_engine::{LiquidationEngine, LiquidationEngineInitArgs};
 use cspr_cdp_contracts::oracle_adapter::{OracleAdapter, OracleAdapterInitArgs};
 use cspr_cdp_contracts::redemption_engine::{RedemptionEngine, RedemptionEngineInitArgs};
@@ -182,18 +182,18 @@ fn main() {
     let branch_cspr_addr = branch_cspr.address().clone();
     println!("BranchCspr deployed at: {:?}", branch_cspr_addr);
 
-    // 10. BranchSCSPR (uses ScsprYbToken as the sCSPR token)
-    println!("Deploying BranchSCSPR...");
-    let branch_scspr = BranchSCSPR::deploy(
+    // 10. BranchScspr (uses ScsprYbToken as the sCSPR token)
+    println!("Deploying BranchScspr...");
+    let branch_scspr = BranchScspr::deploy(
         &env,
-        BranchSCSPRInitArgs {
+        BranchScsprInitArgs {
             registry: registry_addr,
             router: router_addr,
             scspr_token: scspr_ybtoken_addr,
         },
     );
     let branch_scspr_addr = branch_scspr.address().clone();
-    println!("BranchSCSPR deployed at: {:?}", branch_scspr_addr);
+    println!("BranchScspr deployed at: {:?}", branch_scspr_addr);
 
     // 11. Treasury
     println!("Deploying Treasury...");
@@ -286,7 +286,7 @@ fn main() {
     registry.register_branch_cspr(branch_cspr_addr, 9, mcr_bps); // CSPR has 9 decimals
     println!("Done.");
 
-    println!("Registering BranchSCSPR...");
+    println!("Registering BranchScspr...");
     registry.register_branch_scspr(branch_scspr_addr, scspr_ybtoken_addr, 9, mcr_bps);
     println!("Done.");
 
@@ -311,7 +311,7 @@ fn main() {
     println!("  Treasury:           {:?}", treasury_addr);
     println!("  OracleAdapter:      {:?}", oracle_addr);
     println!("  BranchCspr:         {:?}", branch_cspr_addr);
-    println!("  BranchSCSPR:        {:?}", branch_scspr_addr);
+    println!("  BranchScspr:        {:?}", branch_scspr_addr);
     println!("  LiquidationEngine:  {:?}", liquidation_engine_addr);
     println!("  StabilityPool:      {:?}", stability_pool_addr);
     println!("  RedemptionEngine:   {:?}", redemption_engine.address().clone());
