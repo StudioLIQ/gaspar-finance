@@ -5,6 +5,114 @@
 // Supports dictionary item queries for indexed data (balances, requests).
 
 import { getNetworkConfig, CONTRACTS, getCurrentNetwork } from './config';
+import { blake2b } from 'blakejs';
+
+// ========== Odra Dictionary Utilities ==========
+// Odra stores all state in a single "state" dictionary with blake2b-hashed keys
+
+function hexToBytes(hex: string): Uint8Array {
+  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Compute Odra dictionary key for Mapping<Address, V>
+ * Key = blake2b(field_index_u32_be + address_serialization)
+ * Address = tag (0x00 for Account) + 32 bytes hash
+ */
+function computeOdraMappingKey(fieldIndex: number, accountHashHex: string): string {
+  // Index as 4 bytes big endian
+  const indexBytes = new Uint8Array(4);
+  indexBytes[0] = (fieldIndex >> 24) & 0xff;
+  indexBytes[1] = (fieldIndex >> 16) & 0xff;
+  indexBytes[2] = (fieldIndex >> 8) & 0xff;
+  indexBytes[3] = fieldIndex & 0xff;
+
+  // Address serialization: tag (0 for AccountHash) + 32 bytes hash
+  const addressTag = new Uint8Array([0x00]);
+  const hashBytes = hexToBytes(accountHashHex);
+
+  // Concatenate: index + tag + hash
+  const keyData = new Uint8Array(4 + 1 + 32);
+  keyData.set(indexBytes, 0);
+  keyData.set(addressTag, 4);
+  keyData.set(hashBytes, 5);
+
+  // Blake2b hash (32 bytes)
+  const hashedKey = blake2b(keyData, undefined, 32);
+  return bytesToHex(hashedKey);
+}
+
+/**
+ * Compute account hash from public key hex
+ * Casper account hash = blake2b256(algorithm_prefix + 0x00 + raw_public_key)
+ * - Ed25519 (01 prefix): "ed25519" + 0x00 + 32 bytes
+ * - Secp256k1 (02 prefix): "secp256k1" + 0x00 + 33 bytes
+ */
+function computeAccountHashFromPublicKey(publicKeyHex: string): string | null {
+  try {
+    const cleanHex = publicKeyHex.toLowerCase();
+
+    // Determine algorithm from prefix
+    let algorithmPrefix: Uint8Array;
+    let rawKeyBytes: Uint8Array;
+
+    if (cleanHex.startsWith('01')) {
+      // Ed25519: 01 + 64 hex chars (32 bytes)
+      algorithmPrefix = new TextEncoder().encode('ed25519');
+      rawKeyBytes = hexToBytes(cleanHex.slice(2)); // Remove 01 prefix
+    } else if (cleanHex.startsWith('02')) {
+      // Secp256k1: 02 + 66 hex chars (33 bytes)
+      algorithmPrefix = new TextEncoder().encode('secp256k1');
+      rawKeyBytes = hexToBytes(cleanHex.slice(2)); // Remove 02 prefix
+    } else {
+      console.error('[computeAccountHash] Unknown key prefix:', cleanHex.slice(0, 2));
+      return null;
+    }
+
+    // Compute: blake2b256(algorithm_prefix + 0x00 + raw_key)
+    const separator = new Uint8Array([0x00]);
+    const data = new Uint8Array(algorithmPrefix.length + 1 + rawKeyBytes.length);
+    data.set(algorithmPrefix, 0);
+    data.set(separator, algorithmPrefix.length);
+    data.set(rawKeyBytes, algorithmPrefix.length + 1);
+
+    const hash = blake2b(data, undefined, 32);
+    return bytesToHex(hash);
+  } catch (err) {
+    console.error('[computeAccountHash] Failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Parse U256 from Odra-stored bytes (little-endian)
+ */
+function parseU256FromBytes(bytes: Uint8Array, offset: number = 0): bigint {
+  let result = BigInt(0);
+  for (let i = 0; i < 32 && offset + i < bytes.length; i++) {
+    result += BigInt(bytes[offset + i]) << BigInt(i * 8);
+  }
+  return result;
+}
+
+// Field indices for Odra contracts (1-indexed!)
+const ODRA_FIELD_INDEX = {
+  // ScsprYbToken: name(1), symbol(2), decimals(3), total_shares(4), balances(5), ...
+  SCSPR_BALANCES: 5,
+  // CsprUsd: name(1), symbol(2), decimals(3), total_supply(4), balances(5), ...
+  GUSD_BALANCES: 5,
+} as const;
 
 // RPC Response Types
 interface RpcResponse<T> {
@@ -347,19 +455,67 @@ export async function getAccountInfo(
   };
 }
 
-// Query CSPR balance using Casper 2.0 query_balance
+// Fallback: fetch CSPR balance from cspr.live API
+async function fetchBalanceFromCsprLive(publicKeyHex: string): Promise<bigint | null> {
+  try {
+    const network = getCurrentNetwork();
+    const baseUrl = network === 'mainnet'
+      ? 'https://api.cspr.live'
+      : 'https://api.testnet.cspr.live';
+
+    const response = await fetch(`${baseUrl}/accounts/${publicKeyHex}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) {
+      console.warn('[cspr.live] Account fetch failed:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const balance = data?.data?.balance;
+
+    if (typeof balance === 'string' || typeof balance === 'number') {
+      console.log('[cspr.live] CSPR balance:', balance);
+      return BigInt(balance);
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[cspr.live] Fallback failed:', error);
+    return null;
+  }
+}
+
+// Query CSPR balance using Casper 2.0 query_balance with cspr.live fallback
 export async function getAccountCsprBalance(publicKeyHex: string): Promise<bigint> {
   console.log('[RPC] getAccountCsprBalance called with:', publicKeyHex);
+
+  // Validate public key format
+  if (!publicKeyHex || publicKeyHex.length < 64) {
+    console.warn('[RPC] Invalid public key format:', publicKeyHex);
+    return BigInt(0);
+  }
+
+  // Try RPC first
   try {
     const result = await rpcCall<QueryBalanceResult>('query_balance', {
       purse_identifier: { main_purse_under_public_key: publicKeyHex },
     });
     console.log('[RPC] CSPR balance result:', result.balance);
     return BigInt(result.balance);
-  } catch (error) {
-    console.error('[RPC] Failed to get CSPR balance:', error);
-    return BigInt(0);
+  } catch (rpcError) {
+    console.warn('[RPC] query_balance failed, trying cspr.live fallback:', rpcError);
   }
+
+  // Fallback to cspr.live API
+  const fallbackBalance = await fetchBalanceFromCsprLive(publicKeyHex);
+  if (fallbackBalance !== null) {
+    return fallbackBalance;
+  }
+
+  console.error('[RPC] All balance fetch methods failed');
+  return BigInt(0);
 }
 
 export async function getAccountHash(publicKeyHex: string): Promise<string | null> {
@@ -394,11 +550,149 @@ export async function getAccountBalance(publicKey: string): Promise<bigint> {
 
 // LST-specific queries
 
-// NOTE: Odra contracts store all state in a single URef and require entry point calls
-// to read data. Since Casper doesn't support speculative execution (eth_call equivalent),
-// we can't read token balances or protocol stats directly. We return sensible defaults.
+// ========== Odra Dictionary Query Functions ==========
+
+/**
+ * Get entity hash from contract hash (needed for dictionary queries in Casper 2.0)
+ */
+async function getEntityHashFromContractHash(contractHash: string): Promise<string | null> {
+  const normalizedHash = contractHash.replace(/^hash-/, '');
+  try {
+    // Try to get Contract info and extract entity info
+    const stored = await queryGlobalState(`hash-${normalizedHash}`);
+    if (stored?.Contract) {
+      // For Casper 2.0, the entity hash is the same as contract hash
+      return normalizedHash;
+    }
+    return normalizedHash;
+  } catch {
+    return normalizedHash;
+  }
+}
+
+/**
+ * Query Odra dictionary item using state_get_dictionary_item
+ */
+async function queryOdraDictionaryItem(
+  contractHashHex: string,
+  dictionaryItemKey: string
+): Promise<{ bytes?: string; parsed?: unknown } | null> {
+  const stateRootHash = await getStateRootHash();
+  const entityHashHex = contractHashHex.replace(/^hash-/, '');
+
+  // Try ContractNamedKey first (Casper 1.x/2.0 compatible)
+  try {
+    const result = await rpcCall<{
+      stored_value?: { CLValue?: { bytes?: string; parsed?: unknown } };
+    }>('state_get_dictionary_item', {
+      state_root_hash: stateRootHash,
+      dictionary_identifier: {
+        ContractNamedKey: {
+          key: `hash-${entityHashHex}`,
+          dictionary_name: 'state',
+          dictionary_item_key: dictionaryItemKey,
+        },
+      },
+    });
+
+    if (result.stored_value?.CLValue) {
+      return result.stored_value.CLValue;
+    }
+  } catch (e) {
+    console.debug('[queryOdraDictionary] ContractNamedKey failed:', e);
+  }
+
+  // Try EntityNamedKey (Casper 2.0 style)
+  try {
+    const result = await rpcCall<{
+      stored_value?: { CLValue?: { bytes?: string; parsed?: unknown } };
+    }>('state_get_dictionary_item', {
+      state_root_hash: stateRootHash,
+      dictionary_identifier: {
+        EntityNamedKey: {
+          key: `entity-contract-${entityHashHex}`,
+          dictionary_name: 'state',
+          dictionary_item_key: dictionaryItemKey,
+        },
+      },
+    });
+
+    if (result.stored_value?.CLValue) {
+      return result.stored_value.CLValue;
+    }
+  } catch (e) {
+    console.debug('[queryOdraDictionary] EntityNamedKey failed:', e);
+  }
+
+  return null;
+}
+
+/**
+ * Fetch token balance from Odra CEP-18 contract
+ */
+async function fetchOdraTokenBalance(
+  contractHash: string,
+  fieldIndex: number,
+  publicKeyHex: string
+): Promise<bigint> {
+  try {
+    // Compute account hash from public key
+    const accountHashHex = computeAccountHashFromPublicKey(publicKeyHex);
+    if (!accountHashHex) {
+      console.warn('[fetchOdraTokenBalance] Failed to compute account hash');
+      return BigInt(0);
+    }
+
+    // Compute Odra dictionary key
+    const dictionaryKey = computeOdraMappingKey(fieldIndex, accountHashHex);
+    console.log('[fetchOdraTokenBalance] Contract:', contractHash);
+    console.log('[fetchOdraTokenBalance] Account hash:', accountHashHex);
+    console.log('[fetchOdraTokenBalance] Dictionary key:', dictionaryKey);
+
+    // Query dictionary
+    const result = await queryOdraDictionaryItem(contractHash, dictionaryKey);
+
+    if (result) {
+      console.log('[fetchOdraTokenBalance] Result:', JSON.stringify(result));
+
+      // Parse U256 from CLValue
+      const parsed = result.parsed;
+
+      // Odra stores values as Vec<u8> (List U8), so parsed is an array of bytes
+      if (Array.isArray(parsed)) {
+        const bytes = new Uint8Array(parsed);
+        const value = parseU256FromBytes(bytes, 0);
+        console.log('[fetchOdraTokenBalance] Balance from array:', value.toString());
+        return value;
+      } else if (parsed !== undefined && parsed !== null) {
+        // Direct numeric value
+        const value = BigInt(String(parsed));
+        console.log('[fetchOdraTokenBalance] Balance:', value.toString());
+        return value;
+      }
+
+      // Try parsing from bytes if parsed is not available
+      const bytesHex = result.bytes;
+      if (bytesHex) {
+        const bytes = hexToBytes(bytesHex);
+        // Skip 4-byte Vec<u8> length prefix for Odra encoding
+        const value = parseU256FromBytes(bytes, 4);
+        console.log('[fetchOdraTokenBalance] Balance from bytes:', value.toString());
+        return value;
+      }
+    }
+
+    console.log('[fetchOdraTokenBalance] No balance found (user may have 0 balance)');
+    return BigInt(0);
+  } catch (err) {
+    console.warn('[fetchOdraTokenBalance] Error:', err);
+    return BigInt(0);
+  }
+}
+
+// NOTE: Kept for backward compatibility - Odra reading now works via dictionary queries
 const ODRA_READ_LIMITATION_MSG =
-  'Odra contract data requires entry point call - returning default values';
+  'Odra dictionary query';
 
 // Get stCSPR exchange rate from ybToken contract
 export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
@@ -417,8 +711,7 @@ export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
   };
 }
 
-// Get user's stCSPR balance from CEP-18 dictionary
-// NOTE: Odra contracts can't be queried for balances without entry point call
+// Get user's stCSPR balance from CEP-18 dictionary using Odra key computation
 export async function getLstBalance(publicKey: string): Promise<LstBalance | null> {
   const ybTokenHash = CONTRACTS.scsprYbtoken;
   if (!ybTokenHash || ybTokenHash === 'null') {
@@ -426,16 +719,30 @@ export async function getLstBalance(publicKey: string): Promise<LstBalance | nul
     return null;
   }
 
-  // Odra contracts don't expose balances via dictionaries - return 0
-  // User will see actual balance after transactions via events/receipts
-  console.debug('[RPC] getLstBalance:', ODRA_READ_LIMITATION_MSG);
+  console.log('[RPC] getLstBalance: Querying Odra dictionary for stCSPR balance');
 
-  return {
-    scsprBalance: BigInt(0),
-    scsprFormatted: '0',
-    csprEquivalent: BigInt(0),
-    csprEquivalentFormatted: '0',
-  };
+  try {
+    const scsprBalance = await fetchOdraTokenBalance(
+      ybTokenHash,
+      ODRA_FIELD_INDEX.SCSPR_BALANCES,
+      publicKey
+    );
+
+    return {
+      scsprBalance,
+      scsprFormatted: formatCsprAmount(scsprBalance),
+      csprEquivalent: scsprBalance, // 1:1 default rate
+      csprEquivalentFormatted: formatCsprAmount(scsprBalance),
+    };
+  } catch (err) {
+    console.warn('[RPC] getLstBalance failed:', err);
+    return {
+      scsprBalance: BigInt(0),
+      scsprFormatted: '0',
+      csprEquivalent: BigInt(0),
+      csprEquivalentFormatted: '0',
+    };
+  }
 }
 
 // NOTE: Odra contracts can't be queried without entry point call
@@ -648,8 +955,7 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
 
 // ========== gUSD Balance Query ==========
 
-// Get user's gUSD balance from stablecoin contract
-// NOTE: Odra contracts can't be queried for balances without entry point call
+// Get user's gUSD balance from stablecoin contract using Odra dictionary query
 export async function getGusdBalance(publicKey: string): Promise<bigint> {
   const gusdHash = CONTRACTS.stablecoin;
   if (!gusdHash || gusdHash === 'null') {
@@ -657,9 +963,19 @@ export async function getGusdBalance(publicKey: string): Promise<bigint> {
     return BigInt(0);
   }
 
-  // Odra contracts don't expose balances via dictionaries - return 0
-  console.debug('[RPC] getGusdBalance:', ODRA_READ_LIMITATION_MSG);
-  return BigInt(0);
+  console.log('[RPC] getGusdBalance: Querying Odra dictionary for gUSD balance');
+
+  try {
+    const balance = await fetchOdraTokenBalance(
+      gusdHash,
+      ODRA_FIELD_INDEX.GUSD_BALANCES,
+      publicKey
+    );
+    return balance;
+  } catch (err) {
+    console.warn('[RPC] getGusdBalance failed:', err);
+    return BigInt(0);
+  }
 }
 
 // Format gUSD amount (18 decimals)
