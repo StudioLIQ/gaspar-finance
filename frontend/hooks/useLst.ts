@@ -95,13 +95,24 @@ export interface LstActions {
   resetTxState: () => void;
 }
 
+// DEMO MODE: Set to true to show mock LST data for demo video
+const DEMO_MODE = true;
+
+// Mock balance for demo: 100 stCSPR
+const DEMO_LST_BALANCE: LstBalance = {
+  scsprBalance: BigInt('100000000000'), // 100 stCSPR (9 decimals)
+  csprEquivalent: BigInt('100000000000'), // ~100 CSPR equivalent
+  scsprFormatted: '100.0',
+  csprEquivalentFormatted: '100.0',
+};
+
 export function useLst(): LstState & LstActions {
   const { isConnected, publicKey, signDeploy } = useCasperWallet();
 
   // State
   const [isDeployed] = useState(isLSTDeployed());
   const [exchangeRate, setExchangeRate] = useState<LstExchangeRate | null>(null);
-  const [userBalance, setUserBalance] = useState<LstBalance | null>(null);
+  const [userBalance, setUserBalance] = useState<LstBalance | null>(DEMO_MODE ? DEMO_LST_BALANCE : null);
   const [userCsprBalance, setUserCsprBalance] = useState<bigint | null>(null);
   const [withdrawRequests, setWithdrawRequests] = useState<WithdrawRequest[]>([]);
   const [protocolStats, setProtocolStats] = useState<LstProtocolStats | null>(null);
@@ -146,11 +157,15 @@ export function useLst(): LstState & LstActions {
           getAccountCsprBalance(publicKey),
         ]);
 
-        setUserBalance(balanceData);
+        if (!DEMO_MODE) {
+          setUserBalance(balanceData);
+        }
         setWithdrawRequests(requestsData);
         setUserCsprBalance(csprBalanceData);
       } else {
-        setUserBalance(null);
+        if (!DEMO_MODE) {
+          setUserBalance(null);
+        }
         setUserCsprBalance(null);
         setWithdrawRequests([]);
       }
