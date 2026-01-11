@@ -349,7 +349,7 @@ export default function RedeemPage() {
         </div>
 
         <footer className="mt-16 text-center text-sm text-gray-600 pb-8">
-          <p>Casper CDP Protocol - Redemptions</p>
+          <p>GasperFinance Protocol - Redemptions</p>
         </footer>
       </main>
     </div>

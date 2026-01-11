@@ -1,4 +1,4 @@
-// CSPR-CDP Frontend Configuration
+// GasperFinance Frontend Configuration
 //
 // Network and contract configuration for Casper integration.
 // Values are loaded from environment variables set by bind-frontend.sh

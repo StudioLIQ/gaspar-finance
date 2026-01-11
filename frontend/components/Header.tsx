@@ -39,9 +39,9 @@ export function Header() {
       <div className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo.svg" alt="Casper CDP" width={40} height={40} />
+            <Image src="/logo.svg" alt="GasperFinance" width={40} height={40} />
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">Casper CDP</h1>
+              <h1 className="text-lg font-semibold text-gray-900">GasperFinance</h1>
               <p className="text-xs text-gray-500">
                 {CASPER_TESTNET.name} • {SUPPORTED_WALLET}
               </p>
@@ -71,13 +71,11 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
-          {isConnected && publicKey ? (
+          {isConnected && publicKey && (
             <div className="hidden sm:flex flex-col text-right">
               <span className="text-xs text-gray-500">Connected</span>
               <span className="text-sm font-medium text-gray-900">{shortenPublicKey(publicKey, 8)}</span>
             </div>
-          ) : (
-            <span className="hidden sm:inline text-xs text-gray-500">Not connected</span>
           )}
           <Button variant={isConnected ? 'secondary' : 'primary'} size="sm" isLoading={isBusy} onClick={onClick}>
             {buttonLabel}
