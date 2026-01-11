@@ -53,8 +53,11 @@ const MCR_BPS: u32 = 11000;
 /// Liquidation penalty in basis points (10% = 1000 bps)
 const LIQUIDATION_PENALTY_BPS: u32 = 1000;
 
-/// Precision scale (1e18)
-const SCALE: u64 = 1_000_000_000_000_000_000;
+/// Precision scale for prices (1e18)
+const PRICE_SCALE: u64 = 1_000_000_000_000_000_000;
+
+/// Collateral decimals (CSPR/stCSPR use 9 decimals)
+const COLLATERAL_DECIMALS: u64 = 1_000_000_000;
 
 /// Basis points scale
 const BPS_SCALE: u32 = 10000;
@@ -139,7 +142,7 @@ impl LiquidationEngine {
         self.stability_pool.set(stability_pool);
         self.styks_oracle.set(styks_oracle);
         self.liquidation_penalty_bps.set(LIQUIDATION_PENALTY_BPS);
-        self.gas_compensation.set(U256::from(200) * U256::from(SCALE)); // 200 gUSD equivalent
+        self.gas_compensation.set(U256::from(200) * U256::from(PRICE_SCALE)); // 200 gUSD equivalent
         self.total_liquidations.set(0);
         self.total_debt_liquidated.set(U256::zero());
         self.total_collateral_seized.set(U256::zero());
@@ -348,7 +351,7 @@ impl LiquidationEngine {
 
     /// Get gas compensation amount
     pub fn get_gas_compensation(&self) -> U256 {
-        self.gas_compensation.get().unwrap_or(U256::from(200) * U256::from(SCALE))
+        self.gas_compensation.get().unwrap_or(U256::from(200) * U256::from(PRICE_SCALE))
     }
 
     // ========== Admin Functions ==========
@@ -543,7 +546,8 @@ impl LiquidationEngine {
     }
 
     fn calculate_collateral_value(&self, collateral: U256, price: U256) -> U256 {
-        collateral * price / U256::from(SCALE)
+        // collateral (9 dec) * price (18 dec) / 1e9 = value (18 dec)
+        collateral * price / U256::from(COLLATERAL_DECIMALS)
     }
 
     fn calculate_icr(&self, collateral_value: U256, debt: U256) -> u32 {
@@ -569,10 +573,10 @@ impl LiquidationEngine {
         let penalty_bps = self.liquidation_penalty_bps.get().unwrap_or(LIQUIDATION_PENALTY_BPS);
 
         // Calculate collateral to seize: debt * (1 + penalty) / price
-        // collateral_to_seize = debt * (10000 + penalty_bps) / 10000 / price * SCALE
+        // collateral (9 dec) = debt (18 dec) * penalty_multiplier / BPS_SCALE * 1e9 / price (18 dec)
         let penalty_multiplier = U256::from(BPS_SCALE + penalty_bps);
         let collateral_value_needed = debt * penalty_multiplier / U256::from(BPS_SCALE);
-        let collateral_to_seize = collateral_value_needed * U256::from(SCALE) / price;
+        let collateral_to_seize = collateral_value_needed * U256::from(COLLATERAL_DECIMALS) / price;
 
         // Cap at available collateral
         let actual_collateral_seized = if collateral_to_seize > collateral {
@@ -584,7 +588,8 @@ impl LiquidationEngine {
         // Calculate debt covered
         let debt_covered = if collateral_to_seize > collateral {
             // Partial liquidation due to insufficient collateral
-            collateral * price * U256::from(BPS_SCALE) / U256::from(SCALE) / penalty_multiplier
+            // debt (18 dec) = collateral (9 dec) * price (18 dec) / 1e9 * BPS_SCALE / penalty_multiplier
+            collateral * price * U256::from(BPS_SCALE) / U256::from(COLLATERAL_DECIMALS) / penalty_multiplier
         } else {
             debt
         };
@@ -592,8 +597,9 @@ impl LiquidationEngine {
         let fully_liquidated = collateral_to_seize <= collateral;
 
         // Gas compensation for liquidator (small portion of collateral)
+        // gas_comp is in gUSD (18 dec), convert to collateral (9 dec)
         let gas_comp = self.gas_compensation.get().unwrap_or(U256::zero());
-        let gas_comp_in_collateral = gas_comp * U256::from(SCALE) / price;
+        let gas_comp_in_collateral = gas_comp * U256::from(COLLATERAL_DECIMALS) / price;
         let collateral_to_liquidator = if gas_comp_in_collateral > actual_collateral_seized {
             actual_collateral_seized / U256::from(100) // 1% fallback
         } else {

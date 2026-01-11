@@ -42,8 +42,11 @@ pub trait Cep18 {
     fn transfer(&mut self, recipient: Address, amount: U256) -> bool;
 }
 
-/// Precision scale (1e18)
-const SCALE: u64 = 1_000_000_000_000_000_000;
+/// Precision scale for prices (1e18)
+const PRICE_SCALE: u64 = 1_000_000_000_000_000_000;
+
+/// Collateral decimals (CSPR/stCSPR use 9 decimals)
+const COLLATERAL_DECIMALS: u64 = 1_000_000_000;
 
 /// Basis points scale
 const BPS_SCALE: u32 = 10000;
@@ -238,8 +241,9 @@ impl RedemptionEngine {
         }
 
         // Calculate collateral amount before fee
-        // collateral = csprusd_amount * SCALE / price
-        let collateral_before_fee = csprusd_amount * U256::from(SCALE) / price;
+        // gUSD is 18 decimals, price is 18 decimals, collateral is 9 decimals
+        // collateral = csprusd_amount * COLLATERAL_DECIMALS / price
+        let collateral_before_fee = csprusd_amount * U256::from(COLLATERAL_DECIMALS) / price;
 
         // Calculate fee
         let fee_amount = collateral_before_fee * U256::from(current_fee_bps) / U256::from(BPS_SCALE);
@@ -365,7 +369,8 @@ impl RedemptionEngine {
             return (U256::zero(), U256::zero());
         }
 
-        let collateral_before_fee = csprusd_amount * U256::from(SCALE) / price;
+        // gUSD is 18 decimals, price is 18 decimals, collateral is 9 decimals
+        let collateral_before_fee = csprusd_amount * U256::from(COLLATERAL_DECIMALS) / price;
         let fee_bps = self.get_current_fee_bps();
         let fee = collateral_before_fee * U256::from(fee_bps) / U256::from(BPS_SCALE);
         let collateral_after_fee = collateral_before_fee - fee;
@@ -560,8 +565,8 @@ impl RedemptionEngine {
                 csprusd_remaining
             };
 
-            // Calculate collateral to take: collateral = debt / price
-            let collateral_to_take = debt_to_redeem * U256::from(SCALE) / price;
+            // Calculate collateral to take: collateral (9 dec) = debt (18 dec) * 1e9 / price (18 dec)
+            let collateral_to_take = debt_to_redeem * U256::from(COLLATERAL_DECIMALS) / price;
 
             // Cap at vault's actual collateral
             let actual_collateral = if collateral_to_take > vault_collateral {
@@ -577,8 +582,8 @@ impl RedemptionEngine {
                 actual_collateral
             };
 
-            // Recalculate debt based on actual collateral
-            let actual_debt = actual_collateral * price / U256::from(SCALE);
+            // Recalculate debt based on actual collateral: debt (18 dec) = collateral (9 dec) * price (18 dec) / 1e9
+            let actual_debt = actual_collateral * price / U256::from(COLLATERAL_DECIMALS);
 
             if actual_debt.is_zero() || actual_collateral.is_zero() {
                 continue;
@@ -676,25 +681,26 @@ mod tests {
 
     #[test]
     fn test_collateral_calculation() {
-        // gUSD = 100, price = 2 USD per collateral
-        // Expected collateral = 100 / 2 = 50
-        let csprusd = U256::from(100u64) * U256::from(SCALE);
-        let price = U256::from(2u64) * U256::from(SCALE);
+        // gUSD = 100 (18 decimals), price = $2 per collateral (18 decimals)
+        // Expected collateral = 100 / 2 = 50 (9 decimals)
+        let csprusd = U256::from(100u64) * U256::from(PRICE_SCALE); // 100e18
+        let price = U256::from(2u64) * U256::from(PRICE_SCALE);     // 2e18
 
-        let collateral = csprusd * U256::from(SCALE) / price;
-        let expected = U256::from(50u64) * U256::from(SCALE);
+        // collateral = csprusd * COLLATERAL_DECIMALS / price
+        let collateral = csprusd * U256::from(COLLATERAL_DECIMALS) / price;
+        let expected = U256::from(50u64) * U256::from(COLLATERAL_DECIMALS); // 50e9
         assert_eq!(collateral, expected);
     }
 
     #[test]
     fn test_fee_calculation() {
-        // Collateral = 100, fee = 0.5% (50 bps)
+        // Collateral = 100 (9 decimals), fee = 0.5% (50 bps)
         // Expected fee = 100 * 50 / 10000 = 0.5
-        let collateral = U256::from(100u64) * U256::from(SCALE);
+        let collateral = U256::from(100u64) * U256::from(COLLATERAL_DECIMALS); // 100e9
         let fee_bps = BASE_REDEMPTION_FEE_BPS;
 
         let fee = collateral * U256::from(fee_bps) / U256::from(BPS_SCALE);
-        let expected = U256::from(SCALE) / U256::from(2u64); // 0.5 * SCALE
+        let expected = U256::from(COLLATERAL_DECIMALS) / U256::from(2u64); // 0.5e9
         assert_eq!(fee, expected);
     }
 

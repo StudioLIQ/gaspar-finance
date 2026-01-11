@@ -11,8 +11,10 @@ use crate::interest::{accrue_interest, InterestRateConfig, validate_interest_rat
 const MCR_BPS: u32 = 11000;
 /// Minimum debt in smallest unit (2000 gUSD)
 const MIN_DEBT_WHOLE: u64 = 2000;
-/// Scale factor for internal calculations (1e18)
-const SCALE: u64 = 1_000_000_000_000_000_000;
+/// Price scale (1e18) - prices are in 18 decimals
+const PRICE_SCALE: u64 = 1_000_000_000_000_000_000;
+/// Collateral decimals (CSPR uses 9 decimals)
+const COLLATERAL_DECIMALS: u64 = 1_000_000_000;
 /// Maximum interest rate in basis points (40% = 4000 bps)
 const MAX_INTEREST_RATE_BPS: u32 = 4000;
 
@@ -71,7 +73,7 @@ impl BranchCspr {
         self.vault_count.set(0);
         self.sorted_head.set(None);
         self.sorted_tail.set(None);
-        self.last_good_price.set(U256::from(SCALE)); // Default 1:1 price
+        self.last_good_price.set(U256::from(PRICE_SCALE)); // Default 1:1 price
         self.interest_config.set(InterestRateConfig::default());
         self.total_accrued_interest.set(U256::zero());
         self.safe_mode.set(SafeModeState {
@@ -100,7 +102,7 @@ impl BranchCspr {
         }
 
         // Check minimum debt
-        let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(SCALE);
+        let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
         if debt_amount < min_debt {
             self.env().revert(CdpError::BelowMinDebt);
         }
@@ -203,7 +205,7 @@ impl BranchCspr {
 
         // Check minimum debt (if any debt remains)
         if !new_debt.is_zero() {
-            let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(SCALE);
+            let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
             if new_debt < min_debt {
                 self.env().revert(CdpError::BelowMinDebt);
             }
@@ -618,9 +620,9 @@ impl BranchCspr {
     }
 
     fn get_collateral_value(&self, collateral: U256) -> U256 {
-        let price = self.last_good_price.get().unwrap_or(U256::from(SCALE));
-        // collateral * price / SCALE
-        collateral * price / U256::from(SCALE)
+        let price = self.last_good_price.get().unwrap_or(U256::from(PRICE_SCALE));
+        // collateral (9 dec) * price (18 dec) / COLLATERAL_DECIMALS (9) = value (18 dec)
+        collateral * price / U256::from(COLLATERAL_DECIMALS)
     }
 
     fn calculate_icr(&self, collateral_value: U256, debt: U256) -> u32 {

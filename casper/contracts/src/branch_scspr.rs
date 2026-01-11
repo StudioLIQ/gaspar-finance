@@ -11,8 +11,10 @@ use crate::interest::{accrue_interest, InterestRateConfig, validate_interest_rat
 const MCR_BPS: u32 = 11000;
 /// Minimum debt in smallest unit (2000 gUSD)
 const MIN_DEBT_WHOLE: u64 = 2000;
-/// Scale factor for internal calculations (1e18)
-const SCALE: u64 = 1_000_000_000_000_000_000;
+/// Price scale (1e18) - prices and debt are in 18 decimals
+const PRICE_SCALE: u64 = 1_000_000_000_000_000_000;
+/// Collateral decimals (stCSPR uses 9 decimals)
+const COLLATERAL_DECIMALS: u64 = 1_000_000_000;
 /// Maximum interest rate in basis points (40% = 4000 bps)
 const MAX_INTEREST_RATE_BPS: u32 = 4000;
 /// Exchange rate scale (1e18) - must match ScsprYbToken's SCALE
@@ -78,7 +80,7 @@ impl BranchScspr {
         self.vault_count.set(0);
         self.sorted_head.set(None);
         self.sorted_tail.set(None);
-        self.last_good_price.set(U256::from(SCALE)); // Default 1:1 CSPR/USD price
+        self.last_good_price.set(U256::from(PRICE_SCALE)); // Default 1:1 CSPR/USD price
         self.exchange_rate.set(U256::from(RATE_SCALE)); // Default 1:1 stCSPR/CSPR rate
         self.interest_config.set(InterestRateConfig::default());
         self.total_accrued_interest.set(U256::zero());
@@ -108,7 +110,7 @@ impl BranchScspr {
         }
 
         // Check minimum debt
-        let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(SCALE);
+        let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
         if debt_amount < min_debt {
             self.env().revert(CdpError::BelowMinDebt);
         }
@@ -211,7 +213,7 @@ impl BranchScspr {
 
         // Check minimum debt (if any debt remains)
         if !new_debt.is_zero() {
-            let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(SCALE);
+            let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
             if new_debt < min_debt {
                 self.env().revert(CdpError::BelowMinDebt);
             }
@@ -642,14 +644,13 @@ impl BranchScspr {
     /// Composite pricing: P(stCSPR) = P(CSPR) * R
     /// Where R is the stCSPR/CSPR exchange rate (CSPR_PER_SCSPR)
     fn get_collateral_value(&self, collateral: U256) -> U256 {
-        let cspr_price = self.last_good_price.get().unwrap_or(U256::from(SCALE));
+        let cspr_price = self.last_good_price.get().unwrap_or(U256::from(PRICE_SCALE));
         let rate = self.exchange_rate.get().unwrap_or(U256::from(RATE_SCALE));
 
-        // stCSPR_value = collateral * rate * cspr_price / (RATE_SCALE * SCALE)
-        // Simplified: collateral * rate / RATE_SCALE gives CSPR equivalent
-        // Then: cspr_equivalent * cspr_price / SCALE gives USD value
+        // stCSPR collateral (9 dec) * rate (18 dec) / RATE_SCALE (18) = CSPR equivalent (9 dec)
         let cspr_equivalent = collateral * rate / U256::from(RATE_SCALE);
-        cspr_equivalent * cspr_price / U256::from(SCALE)
+        // CSPR equivalent (9 dec) * cspr_price (18 dec) / COLLATERAL_DECIMALS (9) = USD value (18 dec)
+        cspr_equivalent * cspr_price / U256::from(COLLATERAL_DECIMALS)
     }
 
     fn calculate_icr(&self, collateral_value: U256, debt: U256) -> u32 {
