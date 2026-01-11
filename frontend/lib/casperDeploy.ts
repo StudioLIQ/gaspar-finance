@@ -223,6 +223,7 @@ export function buildContractCallDeploy(
   const paymentAmount = params.paymentMotes || DEFAULT_PAYMENT_MOTES;
 
   // Create deploy using DeployUtil
+  // Use newStoredContractByHash for direct contract hash calls (not package hash)
   const deploy = DeployUtil.makeDeploy(
     new DeployUtil.DeployParams(
       senderPubKey,
@@ -230,9 +231,8 @@ export function buildContractCallDeploy(
       1,
       DEPLOY_TTL_MS
     ),
-    DeployUtil.ExecutableDeployItem.newStoredVersionContractByHash(
+    DeployUtil.ExecutableDeployItem.newStoredContractByHash(
       contractHashBytes,
-      null, // use latest version
       params.entryPoint,
       sessionArgs
     ),
