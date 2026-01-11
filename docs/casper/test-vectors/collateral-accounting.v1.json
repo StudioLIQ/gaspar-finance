@@ -1,0 +1,48 @@
+{
+  "version": "v1",
+  "notes": "externalDecimals/internalDecimals are test parameters, not network-confirmed values. Actual confirmed values are decided via docs/casper/decision/parameter-confirmation.md.",
+  "cases": [
+    {
+      "id": "cspr-9-to-18-floor",
+      "inputs": {
+        "asset": "CSPR",
+        "externalDecimals": 9,
+        "internalDecimals": 18,
+        "rounding": "FLOOR",
+        "amountExternal": "123456789"
+      },
+      "expected": {
+        "amountInternal": "123456789000000000",
+        "amountExternalRoundTrip": "123456789"
+      }
+    },
+    {
+      "id": "stcspr-18-to-18-roundtrip",
+      "inputs": {
+        "asset": "stCSPR",
+        "externalDecimals": 18,
+        "internalDecimals": 18,
+        "rounding": "FLOOR",
+        "amountExternal": "5000000000000000000"
+      },
+      "expected": {
+        "amountInternal": "5000000000000000000",
+        "amountExternalRoundTrip": "5000000000000000000"
+      }
+    },
+    {
+      "id": "stcspr-6-to-18-ceil",
+      "inputs": {
+        "asset": "stCSPR",
+        "externalDecimals": 6,
+        "internalDecimals": 18,
+        "rounding": "CEIL",
+        "amountExternal": "1"
+      },
+      "expected": {
+        "amountInternal": "1000000000000",
+        "amountExternalRoundTrip": "1"
+      }
+    }
+  ]
+}

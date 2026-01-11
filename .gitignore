@@ -1,0 +1,52 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+
+# Dotenv file
+.env
+.env.local
+.env.*.local
+
+# Local agent/IDE settings
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+artifacts/
+typechain-types/
+
+# Frontend
+/frontend/.next/
+/frontend/out/
+/frontend/node_modules/
+/frontend/.env.local
+
+# Local keys (never commit real keys)
+keys/*
+!keys/README.md
+*.pem
+*.key
+*.keystore
+
+# Casper deployment records (generated)
+deployments/casper/testnet-*.json
+deployments/casper/mainnet-*.json
+
+# OS
+.DS_Store
+.idea/
+# Rust build artifacts
+/casper/target/

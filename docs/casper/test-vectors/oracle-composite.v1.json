@@ -1,0 +1,123 @@
+{
+  "version": "v1",
+  "notes": "Decimals/scale in this vector are test parameters, not network-confirmed values. Actual network values are confirmed via docs/casper/decision/parameter-confirmation.md and managed in separate profiles.",
+  "cases": [
+    {
+      "id": "composite-R1-floor-18dp",
+      "inputs": {
+        "csprUsd": {
+          "priceInt": "400000000000000000",
+          "priceDecimals": 18,
+          "timestampSec": 1700000000
+        },
+        "rate": {
+          "rateInt": "1050000000000000000",
+          "rateDecimals": 18,
+          "timestampSec": 1700000000,
+          "direction": "CSPR_PER_SCSPR"
+        },
+        "composition": {
+          "mode": "COMPOSITE",
+          "maxAgeSec": 3600
+        },
+        "rounding": {
+          "mode": "FLOOR",
+          "targetPriceDecimals": 18
+        }
+      },
+      "expected": {
+        "scsprUsd": {
+          "priceInt": "420000000000000000",
+          "priceDecimals": 18
+        },
+        "freshness": {
+          "csprUsdFresh": true,
+          "rateFresh": true,
+          "effectiveFresh": true
+        },
+        "tolerance": {
+          "absPriceInt": "0",
+          "relBps": 0
+        }
+      }
+    },
+    {
+      "id": "composite-R2-roundhalfup-8dp",
+      "inputs": {
+        "csprUsd": {
+          "priceInt": "51234567",
+          "priceDecimals": 8,
+          "timestampSec": 1700000000
+        },
+        "rate": {
+          "rateInt": "95238095",
+          "rateDecimals": 8,
+          "timestampSec": 1700000000,
+          "direction": "SCSPR_PER_CSPR"
+        },
+        "composition": {
+          "mode": "COMPOSITE",
+          "maxAgeSec": 600
+        },
+        "rounding": {
+          "mode": "ROUND_HALF_UP",
+          "targetPriceDecimals": 8
+        }
+      },
+      "expected": {
+        "scsprUsd": {
+          "priceInt": "53796295",
+          "priceDecimals": 8
+        },
+        "freshness": {
+          "csprUsdFresh": true,
+          "rateFresh": true,
+          "effectiveFresh": true
+        },
+        "tolerance": {
+          "absPriceInt": "1",
+          "relBps": 0
+        }
+      }
+    },
+    {
+      "id": "stale-rate-makes-effective-stale",
+      "inputs": {
+        "csprUsd": {
+          "priceInt": "400000000000000000",
+          "priceDecimals": 18,
+          "timestampSec": 1700000000
+        },
+        "rate": {
+          "rateInt": "1050000000000000000",
+          "rateDecimals": 18,
+          "timestampSec": 1699990000,
+          "direction": "CSPR_PER_SCSPR"
+        },
+        "composition": {
+          "mode": "COMPOSITE",
+          "maxAgeSec": 3600
+        },
+        "rounding": {
+          "mode": "FLOOR",
+          "targetPriceDecimals": 18
+        }
+      },
+      "expected": {
+        "scsprUsd": {
+          "priceInt": "420000000000000000",
+          "priceDecimals": 18
+        },
+        "freshness": {
+          "csprUsdFresh": true,
+          "rateFresh": false,
+          "effectiveFresh": false
+        },
+        "tolerance": {
+          "absPriceInt": "0",
+          "relBps": 0
+        }
+      }
+    }
+  ]
+}

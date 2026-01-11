@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "docs/casper/schemas/oracle-composite-vector.schema.json",
+  "title": "Oracle Composite Price Test Vector (v1)",
+  "type": "object",
+  "required": ["version", "cases"],
+  "properties": {
+    "version": { "type": "string", "enum": ["v1"] },
+    "notes": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "inputs",
+          "expected"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "inputs": {
+            "type": "object",
+            "required": ["csprUsd", "rate", "composition", "rounding"],
+            "properties": {
+              "csprUsd": {
+                "type": "object",
+                "required": ["priceInt", "priceDecimals", "timestampSec"],
+                "properties": {
+                  "priceInt": { "type": "string", "pattern": "^[0-9]+$" },
+                  "priceDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+                  "timestampSec": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              },
+              "rate": {
+                "type": "object",
+                "required": ["rateInt", "rateDecimals", "timestampSec", "direction"],
+                "properties": {
+                  "rateInt": { "type": "string", "pattern": "^[0-9]+$" },
+                  "rateDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+                  "timestampSec": { "type": "integer", "minimum": 0 },
+                  "direction": { "type": "string", "enum": ["CSPR_PER_SCSPR", "SCSPR_PER_CSPR"] }
+                },
+                "additionalProperties": false
+              },
+              "composition": {
+                "type": "object",
+                "required": ["mode", "maxAgeSec"],
+                "properties": {
+                  "mode": { "type": "string", "enum": ["DIRECT", "COMPOSITE"] },
+                  "maxAgeSec": { "type": "integer", "minimum": 1 }
+                },
+                "additionalProperties": false
+              },
+              "rounding": {
+                "type": "object",
+                "required": ["mode", "targetPriceDecimals"],
+                "properties": {
+                  "mode": { "type": "string", "enum": ["FLOOR", "CEIL", "ROUND_HALF_UP"] },
+                  "targetPriceDecimals": { "type": "integer", "minimum": 0, "maximum": 36 }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "expected": {
+            "type": "object",
+            "required": ["scsprUsd", "freshness"],
+            "properties": {
+              "scsprUsd": {
+                "type": "object",
+                "required": ["priceInt", "priceDecimals"],
+                "properties": {
+                  "priceInt": { "type": "string", "pattern": "^[0-9]+$" },
+                  "priceDecimals": { "type": "integer", "minimum": 0, "maximum": 36 }
+                },
+                "additionalProperties": false
+              },
+              "freshness": {
+                "type": "object",
+                "required": ["csprUsdFresh", "rateFresh", "effectiveFresh"],
+                "properties": {
+                  "csprUsdFresh": { "type": "boolean" },
+                  "rateFresh": { "type": "boolean" },
+                  "effectiveFresh": { "type": "boolean" }
+                },
+                "additionalProperties": false
+              },
+              "tolerance": {
+                "type": "object",
+                "properties": {
+                  "absPriceInt": { "type": "string", "pattern": "^[0-9]+$" },
+                  "relBps": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "deployments/casper/deployments.schema.json",
+  "title": "Casper Deployment Record (v1) — Router + 2 Branches (CSPR/stCSPR)",
+  "type": "object",
+  "required": ["version", "status", "network", "contracts", "collateral", "oraclePolicy", "deploys"],
+  "properties": {
+    "version": { "type": "string", "enum": ["v1"] },
+    "status": {
+      "type": "string",
+      "enum": ["DRAFT", "DEPLOYED", "SMOKED", "ACTIVE", "ROLLED_BACK", "DEPRECATED"]
+    },
+    "network": {
+      "type": "object",
+      "required": ["environment", "name"],
+      "properties": {
+        "environment": { "type": "string", "enum": ["testnet", "mainnet"] },
+        "name": { "type": "string" },
+        "chainRef": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "releaseTag": { "type": "string" },
+        "git": {
+          "type": "object",
+          "properties": {
+            "commitSha": { "type": "string" },
+            "repo": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "manifestPath": { "type": "string" },
+        "manifestSha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "contracts": {
+      "type": "object",
+      "required": ["router", "branchCSPR", "branchSCSPR", "stablecoin", "oracleAdapter"],
+      "properties": {
+        "router": { "$ref": "#/$defs/contractRef" },
+        "branchCSPR": { "$ref": "#/$defs/contractRef" },
+        "branchSCSPR": { "$ref": "#/$defs/contractRef" },
+        "stablecoin": { "$ref": "#/$defs/contractRef" },
+        "oracleAdapter": { "$ref": "#/$defs/contractRef" },
+        "sessionWasm": { "$ref": "#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
+    "collateral": {
+      "type": "object",
+      "required": ["CSPR", "stCSPR"],
+      "properties": {
+        "CSPR": {
+          "type": "object",
+          "required": ["collateralId", "kind", "atomicDeposit"],
+          "properties": {
+            "collateralId": { "type": "string", "const": "CSPR" },
+            "kind": { "type": "string", "const": "NATIVE" },
+            "externalDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+            "amountDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+            "atomicDeposit": {
+              "type": "object",
+              "required": ["mode"],
+              "properties": {
+                "mode": { "type": "string", "enum": ["SESSION_BUNDLE", "OTHER"] },
+                "notes": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "stCSPR": {
+          "type": "object",
+          "required": ["collateralId", "kind", "tokenStandard", "tokenRef", "atomicTransfer"],
+          "properties": {
+            "collateralId": { "type": "string", "const": "stCSPR" },
+            "kind": { "type": "string", "const": "TOKEN" },
+            "tokenStandard": { "type": "string", "enum": ["CEP-18", "UNKNOWN"] },
+            "tokenRef": { "type": "string" },
+            "externalDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+            "amountDecimals": { "type": "integer", "minimum": 0, "maximum": 36 },
+            "feeOnTransferPolicy": {
+              "type": "string",
+              "enum": ["UNKNOWN", "ALLOW_NET_RECEIPT", "DENY", "RESTRICTED"]
+            },
+            "atomicTransfer": {
+              "type": "object",
+              "required": ["mode"],
+              "properties": {
+                "mode": { "type": "string", "enum": ["SESSION_BUNDLE_APPROVE_AND_CALL", "PREAPPROVE_AND_CALL", "OTHER"] },
+                "notes": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "oraclePolicy": {
+      "type": "object",
+      "required": ["source", "scsprMode", "failurePolicy"],
+      "properties": {
+        "source": { "type": "string", "const": "Styks(Odra)" },
+        "scsprMode": { "type": "string", "enum": ["COMPOSITE_CANONICAL", "DIRECT_CANONICAL"] },
+        "failurePolicy": { "type": "string", "enum": ["CIRCUIT_BREAKER"] },
+        "configProfilePath": { "type": "string" },
+        "confirmationProcedureRef": { "type": "string" },
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "maxPriceAgeSeconds": { "type": "integer", "minimum": 1 },
+            "maxDeviationBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "priceUnit": { "type": "string", "enum": ["USD_PER_EXTERNAL_UNIT", "USD_PER_SMALLEST_UNIT"] },
+            "rateDirection": { "type": "string", "enum": ["CSPR_PER_SCSPR", "SCSPR_PER_CSPR"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "deploys": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["purpose", "deployHash", "kind"],
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "INSTALL_ROUTER",
+              "INSTALL_BRANCH_CSPR",
+              "INSTALL_BRANCH_SCSPR",
+              "INSTALL_STABLECOIN",
+              "INSTALL_ORACLE_ADAPTER",
+              "CONFIGURE_ROUTER",
+              "CONFIGURE_ORACLE",
+              "MIGRATION",
+              "SMOKE_CSPR_OPEN_VAULT",
+              "SMOKE_SCSPR_OPEN_VAULT"
+            ]
+          },
+          "kind": { "type": "string", "enum": ["CONTRACT_INSTALL", "CONTRACT_CALL", "SESSION"] },
+          "deployHash": { "type": "string" },
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "executedAt": { "type": "string", "format": "date-time" },
+          "success": { "type": "boolean" },
+          "collateralId": { "type": "string", "enum": ["CSPR", "stCSPR"] },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "smoke": {
+      "type": "object",
+      "properties": {
+        "cspr": { "$ref": "#/$defs/smokeResult" },
+        "scspr": { "$ref": "#/$defs/smokeResult" },
+        "performedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "rollback": {
+      "type": "object",
+      "properties": {
+        "rolledBackAt": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string" },
+        "previousRouterRef": { "$ref": "#/$defs/contractRef" },
+        "previousBranchCSPRRef": { "$ref": "#/$defs/contractRef" },
+        "previousBranchSCSPRRef": { "$ref": "#/$defs/contractRef" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["SMOKED", "ACTIVE"] } } },
+      "then": {
+        "required": ["smoke"],
+        "properties": {
+          "smoke": { "required": ["cspr", "scspr"] }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "contractRef": {
+      "type": "object",
+      "required": ["ref"],
+      "properties": {
+        "ref": { "type": "string" },
+        "contractVersion": { "type": "string" },
+        "schemaVersion": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "artifactRef": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "smokeResult": {
+      "type": "object",
+      "required": ["oneDeployScenario", "deployHash", "success"],
+      "properties": {
+        "oneDeployScenario": {
+          "type": "string",
+          "enum": ["OPEN_VAULT_CSPR_SINGLE_DEPLOY", "OPEN_VAULT_SCSPR_SINGLE_DEPLOY"]
+        },
+        "deployHash": { "type": "string" },
+        "success": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

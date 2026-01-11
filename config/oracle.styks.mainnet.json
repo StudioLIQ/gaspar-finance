@@ -1,0 +1,69 @@
+{
+  "version": "v1",
+  "_comment": "Template only. Do not deploy with any 'TBD' fields. Finalize via docs/casper/decision/parameter-confirmation.md and ADR-001.",
+  "network": {
+    "environment": "mainnet",
+    "casperNetworkName": "TBD",
+    "chainRef": "TBD"
+  },
+  "references": {
+    "adr": "docs/adr/ADR-001-styks-oracle.md",
+    "confirmationProcedure": "docs/casper/decision/parameter-confirmation.md",
+    "spec": "docs/casper/oracle-styks.md"
+  },
+  "priceUnit": {
+    "mode": "USD_PER_EXTERNAL_UNIT",
+    "_allowed": ["USD_PER_EXTERNAL_UNIT", "USD_PER_SMALLEST_UNIT"]
+  },
+  "styks": {
+    "provider": "Styks(Odra)",
+    "csprUsd": {
+      "feedRef": "TBD",
+      "priceDecimals": "TBD",
+      "_comment": "feedRef/decimals are network-dependent; confirm with evidence."
+    },
+    "scsprUsdDirect": {
+      "enabled": "TBD",
+      "_allowedEnabled": ["true", "false"],
+      "feedRef": "TBD",
+      "priceDecimals": "TBD",
+      "_comment": "If direct feed is not available, set enabled=false and leave feedRef/priceDecimals as TBD or omit in the finalized profile."
+    }
+  },
+  "composite": {
+    "enabled": true,
+    "canonicalForSCSPRUsd": true,
+    "rate": {
+      "direction": "CSPR_PER_SCSPR",
+      "_allowedDirection": ["CSPR_PER_SCSPR", "SCSPR_PER_CSPR"],
+      "source": {
+        "type": "ONCHAIN_LST_STATE",
+        "_allowedType": ["ONCHAIN_LST_STATE", "STYKS_RATE_FEED", "HYBRID"],
+        "ref": "TBD",
+        "_comment": "ref identifies contract/package/key/feed id; the exact structure is determined during confirmation."
+      },
+      "rateDecimals": "TBD",
+      "maxAgeSeconds": "TBD"
+    },
+    "freshness": {
+      "effectiveAgeRule": "MAX_COMPONENT_AGE",
+      "_comment": "effective_age = max(age(P_cspr), age(R))."
+    }
+  },
+  "defensePolicy": {
+    "policy": "CIRCUIT_BREAKER",
+    "maxPriceAgeSeconds": "TBD",
+    "maxDeviationBps": "TBD",
+    "deviationBaseline": "LAST_GOOD_PRICE",
+    "_allowedDeviationBaseline": ["LAST_GOOD_PRICE", "DIRECT_FEED_CROSSCHECK"],
+    "safeMode": {
+      "latching": true,
+      "autoClear": false,
+      "_comment": "safe_mode must be explicitly cleared by an authorized operator after incident review."
+    }
+  },
+  "bootstrap": {
+    "requiresInitialBaseline": true,
+    "_comment": "Deviation checks require a baseline (e.g., last_good_price). Define how/when the baseline is established in ops runbook."
+  }
+}

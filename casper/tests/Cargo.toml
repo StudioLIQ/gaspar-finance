@@ -1,0 +1,14 @@
+[package]
+name = "cspr-cdp-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cspr-cdp-contracts = { path = "../contracts" }
+odra = { workspace = true }
+odra-casper-test-vm = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

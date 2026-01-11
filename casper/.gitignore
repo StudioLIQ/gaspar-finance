@@ -1,0 +1,16 @@
+# Build artifacts
+/target/
+/wasm/*.wasm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cargo lock is committed for reproducible builds
+# Cargo.lock

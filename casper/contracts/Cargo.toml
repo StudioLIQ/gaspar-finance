@@ -1,0 +1,17 @@
+[package]
+name = "cspr-cdp-contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+odra = { workspace = true }
+
+[dev-dependencies]
+odra-casper-test-vm = { workspace = true }
+
+[features]
+default = []
