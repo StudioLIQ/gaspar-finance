@@ -5,16 +5,35 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
-import { getUnbondingPeriodDisplay, type LstExchangeRate, type LstBalance, type TxStatus } from '@/hooks/useLst';
+import { getUnbondingPeriodDisplay, type LstExchangeRate, type LstBalance, type TxStatus, type UnstakeStep } from '@/hooks/useLst';
 
 interface LstUnstakeCardProps {
   exchangeRate: LstExchangeRate | null;
   userBalance: LstBalance | null;
   txStatus: TxStatus;
   txError: string | null;
+  unstakeStep: UnstakeStep;
   onUnstake: (amount: string) => Promise<boolean>;
   previewUnstake: (amount: string) => { cspr: bigint; formatted: string } | null;
   resetTxState: () => void;
+}
+
+// Helper to get step label
+function getStepLabel(step: UnstakeStep): string {
+  switch (step) {
+    case 'approve-signing':
+      return 'Step 1/2: Sign Approve';
+    case 'approve-pending':
+      return 'Step 1/2: Confirming Approve...';
+    case 'request-signing':
+      return 'Step 2/2: Sign Request';
+    case 'request-pending':
+      return 'Step 2/2: Confirming Request...';
+    case 'done':
+      return 'Complete!';
+    default:
+      return '';
+  }
 }
 
 export function LstUnstakeCard({
@@ -22,6 +41,7 @@ export function LstUnstakeCard({
   userBalance,
   txStatus,
   txError,
+  unstakeStep,
   onUnstake,
   previewUnstake,
   resetTxState,
@@ -56,6 +76,7 @@ export function LstUnstakeCard({
 
   const isLoading = txStatus === 'signing' || txStatus === 'pending';
   const canUnstake = isConnected && amount && preview && !isLoading;
+  const stepLabel = getStepLabel(unstakeStep);
 
   return (
     <Card title="Unstake stCSPR" subtitle="Request withdrawal to receive CSPR">
@@ -110,10 +131,48 @@ export function LstUnstakeCard({
           </div>
         )}
 
+        {/* Progress Indicator */}
+        {isLoading && unstakeStep !== 'idle' && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full" />
+              <div>
+                <p className="text-sm font-medium text-blue-800">{stepLabel}</p>
+                <p className="text-xs text-blue-600 mt-0.5">
+                  {unstakeStep.includes('signing') && 'Please confirm in your wallet'}
+                  {unstakeStep.includes('pending') && 'Waiting for blockchain confirmation...'}
+                </p>
+              </div>
+            </div>
+            {/* Step Progress Bar */}
+            <div className="mt-3 flex gap-2">
+              <div className={`flex-1 h-1.5 rounded ${
+                unstakeStep === 'approve-signing' || unstakeStep === 'approve-pending'
+                  ? 'bg-blue-500 animate-pulse'
+                  : unstakeStep === 'request-signing' || unstakeStep === 'request-pending' || unstakeStep === 'done'
+                    ? 'bg-green-500'
+                    : 'bg-gray-200'
+              }`} />
+              <div className={`flex-1 h-1.5 rounded ${
+                unstakeStep === 'request-signing' || unstakeStep === 'request-pending'
+                  ? 'bg-blue-500 animate-pulse'
+                  : unstakeStep === 'done'
+                    ? 'bg-green-500'
+                    : 'bg-gray-200'
+              }`} />
+            </div>
+            <div className="mt-1 flex justify-between text-xs text-gray-500">
+              <span>Approve</span>
+              <span>Request</span>
+            </div>
+          </div>
+        )}
+
         {/* Error Display */}
         {txError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-sm text-red-700">{txError}</p>
+            <p className="text-sm font-medium text-red-800">Transaction Failed</p>
+            <p className="text-sm text-red-700 mt-1">{txError}</p>
           </div>
         )}
 
@@ -129,16 +188,20 @@ export function LstUnstakeCard({
           {!isConnected
             ? 'Connect Wallet'
             : isLoading
-              ? 'Processing...'
+              ? stepLabel || 'Processing...'
               : 'Request Unstake'}
         </Button>
 
         {/* Info */}
-        <p className="text-xs text-gray-500 text-center">
-          Unstaking requires a 2-step process: Approve stCSPR, then Request Withdraw.
-          <br />
-          Withdrawals can be claimed after the {getUnbondingPeriodDisplay()} cooldown period.
-        </p>
+        <div className="bg-gray-50 rounded-lg p-3">
+          <p className="text-xs text-gray-600 font-medium mb-1">How unstaking works:</p>
+          <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5">
+            <li>Approve stCSPR spending (1st signature)</li>
+            <li>Request withdrawal (2nd signature)</li>
+            <li>Wait {getUnbondingPeriodDisplay()} cooldown</li>
+            <li>Claim your CSPR</li>
+          </ol>
+        </div>
       </div>
     </Card>
   );

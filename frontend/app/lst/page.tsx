@@ -66,6 +66,7 @@ export default function LstPage() {
             userBalance={lst.userBalance}
             txStatus={lst.txStatus}
             txError={lst.txError}
+            unstakeStep={lst.unstakeStep}
             onUnstake={lst.requestUnstake}
             previewUnstake={lst.previewUnstake}
             resetTxState={lst.resetTxState}

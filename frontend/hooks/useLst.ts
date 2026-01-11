@@ -39,6 +39,9 @@ const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
 // Transaction status
 export type TxStatus = 'idle' | 'signing' | 'pending' | 'success' | 'error';
 
+// Unstake step for UX feedback
+export type UnstakeStep = 'idle' | 'approve-signing' | 'approve-pending' | 'request-signing' | 'request-pending' | 'done';
+
 export interface LstState {
   // Contract deployment status
   isDeployed: boolean;
@@ -66,6 +69,9 @@ export interface LstState {
   txStatus: TxStatus;
   txError: string | null;
   txHash: string | null;
+
+  // Unstake step tracking
+  unstakeStep: UnstakeStep;
 }
 
 export interface LstActions {
@@ -104,6 +110,7 @@ export function useLst(): LstState & LstActions {
   const [txStatus, setTxStatus] = useState<TxStatus>('idle');
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [unstakeStep, setUnstakeStep] = useState<UnstakeStep>('idle');
 
   // Computed values
   const pendingRequestsCount = withdrawRequests.filter((r) => r.status === 'pending').length;
@@ -171,6 +178,7 @@ export function useLst(): LstState & LstActions {
     setTxStatus('idle');
     setTxError(null);
     setTxHash(null);
+    setUnstakeStep('idle');
   }, []);
 
   // Preview stake: CSPR -> stCSPR
@@ -398,6 +406,7 @@ export function useLst(): LstState & LstActions {
       setTxStatus('signing');
       setTxError(null);
       setTxHash(null);
+      setUnstakeStep('approve-signing');
 
       try {
         // Step 1: Build and sign approve deploy
@@ -417,10 +426,12 @@ export function useLst(): LstState & LstActions {
         if (!signedApprove) {
           setTxError('Approve signing cancelled');
           setTxStatus('error');
+          setUnstakeStep('idle');
           return false;
         }
 
         setTxStatus('pending');
+        setUnstakeStep('approve-pending');
         const approveHash = await submitDeploy(signedApprove);
         setTxHash(approveHash);
 
@@ -433,13 +444,15 @@ export function useLst(): LstState & LstActions {
         }
 
         if (approveStatus === 'error') {
-          setTxError('Approve transaction failed');
+          setTxError('Approve transaction failed on-chain');
           setTxStatus('error');
+          setUnstakeStep('idle');
           return false;
         }
 
         // Step 2: Build and sign request_withdraw deploy
         setTxStatus('signing');
+        setUnstakeStep('request-signing');
         const requestArgs: DeployArg[] = [
           { name: 'shares', clType: 'U256', value: shares.toString() },
         ];
@@ -452,12 +465,14 @@ export function useLst(): LstState & LstActions {
 
         const signedRequest = await signDeploy(requestDeploy);
         if (!signedRequest) {
-          setTxError('Request signing cancelled');
+          setTxError('Request signing cancelled (approve was successful)');
           setTxStatus('error');
+          setUnstakeStep('idle');
           return false;
         }
 
         setTxStatus('pending');
+        setUnstakeStep('request-pending');
         const requestHash = await submitDeploy(signedRequest);
         setTxHash(requestHash);
 
@@ -470,22 +485,25 @@ export function useLst(): LstState & LstActions {
         }
 
         if (requestStatus === 'error') {
-          setTxError('Request withdraw transaction failed');
+          setTxError('Request withdraw failed on-chain. The contract may not be properly initialized.');
           setTxStatus('error');
+          setUnstakeStep('idle');
           return false;
         }
 
         setTxStatus('success');
+        setUnstakeStep('done');
         await refresh();
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Transaction failed';
         setTxError(message);
         setTxStatus('error');
+        setUnstakeStep('idle');
         return false;
       }
     },
-    [isConnected, publicKey, userBalance, refresh]
+    [isConnected, publicKey, userBalance, signDeploy, refresh]
   );
 
   // Claim matured withdraw request
@@ -583,6 +601,7 @@ export function useLst(): LstState & LstActions {
     txStatus,
     txError,
     txHash,
+    unstakeStep,
 
     // Actions
     refresh,
