@@ -380,7 +380,10 @@ async function rpcCall<T>(method: string, params: unknown[] | Record<string, unk
     const data = (await response.json()) as RpcResponse<T>;
 
     if (data.error) {
-      console.warn(`[RPC] ${method} error:`, data.error.message);
+      // state_get_dictionary_item returns error when key doesn't exist - this is expected
+      if (method !== 'state_get_dictionary_item') {
+        console.warn(`[RPC] ${method} error:`, data.error.message);
+      }
       throw new Error(`RPC error: ${data.error.message} (code: ${data.error.code})`);
     }
 
@@ -390,7 +393,9 @@ async function rpcCall<T>(method: string, params: unknown[] | Record<string, unk
 
     return data.result;
   } catch (error) {
-    console.error(`[RPC] ${method} failed:`, error);
+    if (method !== 'state_get_dictionary_item') {
+      console.error(`[RPC] ${method} failed:`, error);
+    }
     throw error;
   }
 }
