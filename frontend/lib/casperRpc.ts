@@ -64,6 +64,27 @@ interface GetBalanceResult {
   merkle_proof: string;
 }
 
+// Casper 2.0 query_balance result
+interface QueryBalanceResult {
+  api_version: string;
+  balance: string;
+}
+
+// Casper 2.0 state_get_entity result
+interface StateGetEntityResult {
+  api_version: string;
+  entity: {
+    Account?: {
+      account_hash: string;
+      main_purse: string;
+      named_keys: NamedKey[];
+      associated_keys: unknown[];
+      action_thresholds: unknown;
+    };
+  };
+  merkle_proof: string;
+}
+
 interface DictionaryItemResult {
   api_version: string;
   dictionary_key: string;
@@ -147,7 +168,7 @@ export function getUnbondingPeriodDisplay(): string {
 // RPC Client
 let requestId = 1;
 
-async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
+async function rpcCall<T>(method: string, params: unknown[] | Record<string, unknown>): Promise<T> {
   const network = getNetworkConfig();
   const response = await fetch(network.rpcUrl, {
     method: 'POST',
@@ -185,16 +206,14 @@ export async function getStateRootHash(): Promise<string> {
   return result.state_root_hash;
 }
 
-// Query global state by key (URef, Hash, etc.)
-export async function queryGlobalState(key: string): Promise<StoredValue | null> {
-  const stateRootHash = await getStateRootHash();
-
+// Query global state by key (URef, Hash, etc.) - Casper 2.0 format
+export async function queryGlobalState(key: string, path: string[] = []): Promise<StoredValue | null> {
   try {
-    const result = await rpcCall<QueryGlobalStateResult>('query_global_state', [
-      { StateRootHash: stateRootHash },
+    const result = await rpcCall<QueryGlobalStateResult>('query_global_state', {
       key,
-      [],
-    ]);
+      state_identifier: null, // latest state
+      path,
+    });
     return result.stored_value;
   } catch {
     return null;
@@ -244,7 +263,7 @@ export async function queryContractNamedKey(
   return stored.CLValue.parsed;
 }
 
-// Query dictionary item by seed URef and key
+// Query dictionary item by seed URef and key - Casper 2.0 format
 export async function queryDictionaryItem(
   seedURef: string,
   dictionaryKey: string
@@ -252,15 +271,15 @@ export async function queryDictionaryItem(
   const stateRootHash = await getStateRootHash();
 
   try {
-    const result = await rpcCall<DictionaryItemResult>('state_get_dictionary_item', [
-      stateRootHash,
-      {
+    const result = await rpcCall<DictionaryItemResult>('state_get_dictionary_item', {
+      state_root_hash: stateRootHash,
+      dictionary_identifier: {
         URef: {
           seed_uref: seedURef,
           dictionary_item_key: dictionaryKey,
         },
       },
-    ]);
+    });
 
     if (result.stored_value.CLValue) {
       return result.stored_value.CLValue.parsed;
@@ -290,44 +309,55 @@ export async function queryContractDictionary(
   return queryDictionaryItem(seedURef, itemKey);
 }
 
-// Get account info including main_purse
-export async function getAccountInfo(
+// Get account entity info using Casper 2.0 state_get_entity
+export async function getAccountEntity(
   publicKeyHex: string
-): Promise<AccountInfoResult['account'] | null> {
+): Promise<StateGetEntityResult['entity']['Account'] | null> {
   try {
-    const result = await rpcCall<AccountInfoResult>('state_get_account_info', [
-      { PublicKey: publicKeyHex },
-      null, // latest block
-    ]);
-    return result.account;
+    const result = await rpcCall<StateGetEntityResult>('state_get_entity', {
+      entity_identifier: { PublicKey: publicKeyHex },
+    });
+    return result.entity.Account ?? null;
   } catch {
     return null;
   }
 }
 
-// Query CSPR balance via account's main_purse URef
+// Legacy wrapper for getAccountInfo (uses Casper 2.0 state_get_entity)
+export async function getAccountInfo(
+  publicKeyHex: string
+): Promise<AccountInfoResult['account'] | null> {
+  const entity = await getAccountEntity(publicKeyHex);
+  if (!entity) return null;
+
+  return {
+    account_hash: entity.account_hash,
+    main_purse: entity.main_purse,
+    named_keys: entity.named_keys,
+    associated_keys: entity.associated_keys,
+    action_thresholds: entity.action_thresholds,
+  };
+}
+
+// Query CSPR balance using Casper 2.0 query_balance
 export async function getAccountCsprBalance(publicKeyHex: string): Promise<bigint> {
-  const accountInfo = await getAccountInfo(publicKeyHex);
-  if (!accountInfo?.main_purse) {
-    return BigInt(0);
-  }
-
-  const stateRootHash = await getStateRootHash();
-
   try {
-    const result = await rpcCall<GetBalanceResult>('state_get_balance', [
-      stateRootHash,
-      accountInfo.main_purse,
-    ]);
-    return BigInt(result.balance_value);
-  } catch {
+    const result = await rpcCall<QueryBalanceResult>('query_balance', {
+      purse_identifier: { main_purse_under_public_key: publicKeyHex },
+    });
+    return BigInt(result.balance);
+  } catch (error) {
+    console.error('Failed to get CSPR balance:', error);
     return BigInt(0);
   }
 }
 
 export async function getAccountHash(publicKeyHex: string): Promise<string | null> {
-  const accountInfo = await getAccountInfo(publicKeyHex);
-  return accountInfo?.account_hash ?? null;
+  const entity = await getAccountEntity(publicKeyHex);
+  if (!entity?.account_hash) return null;
+
+  // Return just the hash part without 'account-hash-' prefix
+  return entity.account_hash.replace(/^account-hash-/, '');
 }
 
 // Legacy compatibility wrapper (deprecated - use queryContractNamedKey instead)
@@ -938,48 +968,47 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
   }
 }
 
-// Styks Oracle contract package hash (Casper Testnet)
-const STYKS_PRICE_FEED = '2879d6e927289197aab0101cc033f532fe22e4ab4686e44b5743cb1333031acc';
+// Styks Oracle contract hashes (Casper Testnet)
+// Package hash for reference: 2879d6e927289197aab0101cc033f532fe22e4ab4686e44b5743cb1333031acc
+const STYKS_CONTRACT_HASH = '3f1efb55d4795bba39ab8c204b554ea16638d0ab3fe58a01e16190e7103f5a0b';
 
 // Get CSPR/USD price from Styks oracle
 async function getStyksCsprPrice(): Promise<bigint | null> {
   try {
-    const network = getNetworkConfig();
+    // Try to get price from Styks state dictionary
     const stateRootHash = await getStateRootHash();
     if (!stateRootHash) return null;
 
-    // Query Styks price feed for CSPR/USD TWAP
-    const response = await fetch(network.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'query_global_state',
-        params: {
-          state_identifier: { StateRootHash: stateRootHash },
-          key: `hash-${STYKS_PRICE_FEED}`,
-          path: ['twap_prices', 'CSPRUSD'],
+    // Query Styks price feed - try dictionary lookup for CSPRUSD pair
+    const result = await rpcCall<DictionaryItemResult>('state_get_dictionary_item', {
+      state_root_hash: stateRootHash,
+      dictionary_identifier: {
+        ContractNamedKey: {
+          key: `hash-${STYKS_CONTRACT_HASH}`,
+          dictionary_name: 'state',
+          dictionary_item_key: 'CSPRUSD',
         },
-      }),
+      },
     });
 
-    const data = await response.json();
-    if (data.result?.stored_value?.CLValue?.parsed) {
-      // Styks returns price data - extract the price value
-      const priceData = data.result.stored_value.CLValue.parsed;
+    if (result.stored_value?.CLValue?.parsed) {
+      const priceData = result.stored_value.CLValue.parsed;
       // Handle different possible formats
       if (typeof priceData === 'string') {
         return BigInt(priceData);
-      } else if (priceData.price) {
-        return BigInt(priceData.price);
-      } else if (priceData.value) {
-        return BigInt(priceData.value);
+      } else if (typeof priceData === 'object' && priceData !== null) {
+        // Try common field names for price data
+        const data = priceData as Record<string, unknown>;
+        const price = data.price ?? data.value ?? data.twap ?? data.spot;
+        if (price !== undefined) {
+          return BigInt(String(price));
+        }
       }
     }
     return null;
   } catch (error) {
-    console.error('Failed to get Styks CSPR price:', error);
+    // Styks oracle might not have CSPRUSD data - this is expected
+    console.debug('Styks CSPRUSD not available:', error);
     return null;
   }
 }
