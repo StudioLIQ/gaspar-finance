@@ -22,7 +22,7 @@ import {
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
 
 // Transaction status
-export type TxStatus = 'idle' | 'signing' | 'pending' | 'success' | 'error';
+export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
 
 // Collateral type for redemption
 export type CollateralType = 'CSPR' | 'stCSPR';
@@ -308,7 +308,7 @@ export function useRedemption(): RedemptionState & RedemptionActions {
           return false;
         }
 
-        setTxStatus('pending');
+        setTxStatus('approving');
         const approveDeployHash = await submitDeploy(signedApprove);
         setTxHash(approveDeployHash);
 

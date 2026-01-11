@@ -377,13 +377,19 @@ export function useCdp(): CdpState & CdpActions {
             return false;
           }
 
-          setTxStatus('pending');
+          setTxStatus('approving');
           const approveHash = await submitDeploy(signedApprove);
+          setTxHash(approveHash);
 
           // Wait for approve
           for (let i = 0; i < 24; i++) {
             await new Promise((r) => setTimeout(r, 5000));
             const status = await getDeployStatus(approveHash);
+            if (status === 'error') {
+              setTxError('Approval transaction failed');
+              setTxStatus('error');
+              return false;
+            }
             if (status !== 'pending') break;
           }
 
@@ -442,7 +448,8 @@ export function useCdp(): CdpState & CdpActions {
     [isConnected, publicKey, signDeploy, previewOpenVault, refresh]
   );
 
-  // Adjust vault (simplified - just repay for now)
+  // Adjust vault - supports adding/withdrawing collateral and borrowing/repaying debt
+  // Requires approve for: gUSD repay, stCSPR collateral deposit
   const adjustVault = useCallback(
     async (
       collateralType: CollateralType,
@@ -472,6 +479,99 @@ export function useCdp(): CdpState & CdpActions {
         const debtMotes = parseCsprInput(debtDelta) || BigInt(0);
         const debtAmount = debtMotes * BigInt('1000000000'); // Scale to 18 decimals
 
+        // Step 1: Approve gUSD if repaying debt
+        if (isDebtRepay && debtAmount > BigInt(0)) {
+          const gusdHash = CONTRACTS.stablecoin;
+          if (!gusdHash || gusdHash === 'null') {
+            setTxError('gUSD contract not deployed');
+            setTxStatus('error');
+            return false;
+          }
+
+          const approveArgs: DeployArg[] = [
+            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            { name: 'amount', clType: 'U256', value: debtAmount.toString() },
+          ];
+
+          const approveDeploy = buildContractCallDeploy(publicKey, {
+            contractHash: gusdHash,
+            entryPoint: 'approve',
+            args: approveArgs,
+          });
+
+          const signedApprove = await signDeploy(approveDeploy);
+          if (!signedApprove) {
+            setTxError('gUSD approval cancelled');
+            setTxStatus('error');
+            return false;
+          }
+
+          setTxStatus('approving');
+          const approveHash = await submitDeploy(signedApprove);
+          setTxHash(approveHash);
+
+          // Wait for gUSD approve
+          for (let i = 0; i < 24; i++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const status = await getDeployStatus(approveHash);
+            if (status === 'error') {
+              setTxError('gUSD approval failed');
+              setTxStatus('error');
+              return false;
+            }
+            if (status !== 'pending') break;
+          }
+
+          setTxStatus('signing');
+        }
+
+        // Step 2: Approve stCSPR if depositing collateral (not withdrawing)
+        if (collateralType === 'scspr' && !isCollateralWithdraw && collateralMotes > BigInt(0)) {
+          const ybTokenHash = CONTRACTS.scsprYbtoken;
+          if (!ybTokenHash || ybTokenHash === 'null') {
+            setTxError('stCSPR contract not deployed');
+            setTxStatus('error');
+            return false;
+          }
+
+          const approveArgs: DeployArg[] = [
+            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            { name: 'amount', clType: 'U256', value: collateralMotes.toString() },
+          ];
+
+          const approveDeploy = buildContractCallDeploy(publicKey, {
+            contractHash: ybTokenHash,
+            entryPoint: 'approve',
+            args: approveArgs,
+          });
+
+          const signedApprove = await signDeploy(approveDeploy);
+          if (!signedApprove) {
+            setTxError('stCSPR approval cancelled');
+            setTxStatus('error');
+            return false;
+          }
+
+          setTxStatus('approving');
+          const approveHash = await submitDeploy(signedApprove);
+          setTxHash(approveHash);
+
+          // Wait for stCSPR approve
+          for (let i = 0; i < 24; i++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const status = await getDeployStatus(approveHash);
+            if (status === 'error') {
+              setTxError('stCSPR approval failed');
+              setTxStatus('error');
+              return false;
+            }
+            if (status !== 'pending') break;
+          }
+
+          setTxStatus('signing');
+        }
+
+        // Step 3: Call adjust_vault
         const args: DeployArg[] = [
           { name: 'collateral_id', clType: 'U8', value: collateralType === 'cspr' ? '0' : '1' },
           { name: 'collateral_delta', clType: 'U256', value: collateralMotes.toString() },
@@ -525,11 +625,18 @@ export function useCdp(): CdpState & CdpActions {
     [isConnected, publicKey, signDeploy, refresh]
   );
 
-  // Close vault
+  // Close vault - requires gUSD approval to repay debt
   const closeVault = useCallback(
     async (collateralType: CollateralType): Promise<boolean> => {
       if (!isConnected || !publicKey) {
         setTxError('Wallet not connected');
+        return false;
+      }
+
+      // Get the vault to know how much debt to approve
+      const vault = collateralType === 'cspr' ? csprVault : scsprVault;
+      if (!vault) {
+        setTxError('No vault found');
         return false;
       }
 
@@ -545,6 +652,54 @@ export function useCdp(): CdpState & CdpActions {
           return false;
         }
 
+        // Step 1: Approve gUSD for debt repayment
+        const debtAmount = vault.vault.debt;
+        if (debtAmount > BigInt(0)) {
+          const gusdHash = CONTRACTS.stablecoin;
+          if (!gusdHash || gusdHash === 'null') {
+            setTxError('gUSD contract not deployed');
+            setTxStatus('error');
+            return false;
+          }
+
+          const approveArgs: DeployArg[] = [
+            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            { name: 'amount', clType: 'U256', value: debtAmount.toString() },
+          ];
+
+          const approveDeploy = buildContractCallDeploy(publicKey, {
+            contractHash: gusdHash,
+            entryPoint: 'approve',
+            args: approveArgs,
+          });
+
+          const signedApprove = await signDeploy(approveDeploy);
+          if (!signedApprove) {
+            setTxError('gUSD approval cancelled');
+            setTxStatus('error');
+            return false;
+          }
+
+          setTxStatus('approving');
+          const approveHash = await submitDeploy(signedApprove);
+          setTxHash(approveHash);
+
+          // Wait for gUSD approve
+          for (let i = 0; i < 24; i++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const status = await getDeployStatus(approveHash);
+            if (status === 'error') {
+              setTxError('gUSD approval failed');
+              setTxStatus('error');
+              return false;
+            }
+            if (status !== 'pending') break;
+          }
+
+          setTxStatus('signing');
+        }
+
+        // Step 2: Close vault
         const args: DeployArg[] = [
           { name: 'collateral_id', clType: 'U8', value: collateralType === 'cspr' ? '0' : '1' },
         ];
@@ -591,7 +746,7 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
     },
-    [isConnected, publicKey, signDeploy, refresh]
+    [isConnected, publicKey, csprVault, scsprVault, signDeploy, refresh]
   );
 
   return {

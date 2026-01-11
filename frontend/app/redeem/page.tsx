@@ -135,14 +135,14 @@ function RedemptionCard({
     if (success) setAmount('');
   };
 
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
   const canRedeem =
     isConnected &&
     amount.length > 0 &&
     parseFloat(amount) > 0 &&
     quote !== null &&
     !stats?.isSafeModeActive &&
-    txStatus !== 'signing' &&
-    txStatus !== 'pending';
+    !isProcessing;
 
   return (
     <Card title="Redeem gUSD" subtitle="Exchange gUSD for collateral at face value">
@@ -165,7 +165,7 @@ function RedemptionCard({
                   type="button"
                   onClick={handleMaxRedeem}
                   className="text-xs text-primary-600 hover:text-primary-700 font-medium"
-                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                  disabled={isProcessing}
                 >
                   MAX
                 </button>
@@ -216,7 +216,7 @@ function RedemptionCard({
         <Button
           onClick={handleRedeem}
           disabled={!canRedeem}
-          isLoading={txStatus === 'signing' || txStatus === 'pending'}
+          isLoading={isProcessing}
           className="w-full"
         >
           {!isConnected
@@ -225,9 +225,11 @@ function RedemptionCard({
               ? 'Redemptions Paused'
               : txStatus === 'signing'
                 ? 'Confirm in Wallet...'
-                : txStatus === 'pending'
-                  ? 'Processing...'
-                  : `Redeem for ${collateralType}`}
+                : txStatus === 'approving'
+                  ? 'Approving gUSD...'
+                  : txStatus === 'pending'
+                    ? 'Redeeming...'
+                    : `Redeem for ${collateralType}`}
         </Button>
 
         {/* Info */}

@@ -61,7 +61,7 @@ export function CdpOpenVaultCard({
 
   const collateralLabel = collateralType === 'cspr' ? 'CSPR' : 'stCSPR';
   const userBalance = collateralType === 'cspr' ? balances.cspr : balances.scspr;
-  const isProcessing = txStatus === 'signing' || txStatus === 'pending';
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
 
   // Update preview when inputs change
   useEffect(() => {
@@ -276,9 +276,13 @@ export function CdpOpenVaultCard({
         >
           {!isConnected
             ? 'Connect Wallet'
-            : isProcessing
-              ? 'Processing...'
-              : 'Open Vault'}
+            : txStatus === 'signing'
+              ? 'Confirm in Wallet...'
+              : txStatus === 'approving'
+                ? `Approving ${collateralLabel}...`
+                : txStatus === 'pending'
+                  ? 'Opening Vault...'
+                  : 'Open Vault'}
         </Button>
 
         {/* Info */}

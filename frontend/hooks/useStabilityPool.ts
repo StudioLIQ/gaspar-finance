@@ -22,7 +22,7 @@ import {
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
 
 // Transaction status
-export type TxStatus = 'idle' | 'signing' | 'pending' | 'success' | 'error';
+export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
 
 // User deposit in stability pool
 export interface StabilityPoolDeposit {
@@ -258,7 +258,7 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
           return false;
         }
 
-        setTxStatus('pending');
+        setTxStatus('approving');
         const approveHash = await submitDeploy(signedApprove);
         setTxHash(approveHash);
 
@@ -276,7 +276,7 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
           return false;
         }
 
-        // Step 2: Call deposit_u8 on Stability Pool
+        // Step 2: Call deposit on Stability Pool
         setTxStatus('signing');
         const depositArgs: DeployArg[] = [
           { name: 'amount', clType: 'U256', value: gusdMotes.toString() },

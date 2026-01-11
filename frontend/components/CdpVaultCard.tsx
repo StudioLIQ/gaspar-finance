@@ -38,7 +38,7 @@ export function CdpVaultCard({
   const { isConnected } = useCasperWallet();
 
   const collateralLabel = collateralType === 'cspr' ? 'CSPR' : 'stCSPR';
-  const isProcessing = txStatus === 'signing' || txStatus === 'pending';
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
 
   // Format price for display (18 decimals -> USD)
   const priceUsd = Number(collateralPrice) / 1e18;
@@ -192,7 +192,13 @@ export function CdpVaultCard({
             disabled={isProcessing}
             isLoading={isProcessing}
           >
-            Close Vault
+            {txStatus === 'signing'
+              ? 'Confirm...'
+              : txStatus === 'approving'
+                ? 'Approving gUSD...'
+                : txStatus === 'pending'
+                  ? 'Closing...'
+                  : 'Close Vault'}
           </Button>
         </div>
 

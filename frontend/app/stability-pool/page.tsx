@@ -53,12 +53,12 @@ function DepositCard({
     }
   };
 
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
   const canDeposit =
     isConnected &&
     amount.length > 0 &&
     parseFloat(amount) > 0 &&
-    txStatus !== 'signing' &&
-    txStatus !== 'pending';
+    !isProcessing;
 
   return (
     <Card title="Deposit gUSD" subtitle="Earn liquidation gains">
@@ -72,7 +72,7 @@ function DepositCard({
                   type="button"
                   onClick={handleMaxDeposit}
                   className="text-xs text-primary-600 hover:text-primary-700 font-medium"
-                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                  disabled={isProcessing}
                 >
                   MAX
                 </button>
@@ -108,16 +108,18 @@ function DepositCard({
         <Button
           onClick={handleDeposit}
           disabled={!canDeposit}
-          isLoading={txStatus === 'signing' || txStatus === 'pending'}
+          isLoading={isProcessing}
           className="w-full"
         >
           {!isConnected
             ? 'Connect Wallet'
             : txStatus === 'signing'
               ? 'Confirm in Wallet...'
-              : txStatus === 'pending'
-                ? 'Processing...'
-                : 'Deposit gUSD'}
+              : txStatus === 'approving'
+                ? 'Approving gUSD...'
+                : txStatus === 'pending'
+                  ? 'Depositing...'
+                  : 'Deposit gUSD'}
         </Button>
 
         <p className="text-xs text-gray-500 text-center">
@@ -157,14 +159,14 @@ function WithdrawCard({
     }
   };
 
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
   const canWithdraw =
     isConnected &&
     amount.length > 0 &&
     parseFloat(amount) > 0 &&
     userDeposit &&
     userDeposit.depositedAmount > BigInt(0) &&
-    txStatus !== 'signing' &&
-    txStatus !== 'pending';
+    !isProcessing;
 
   return (
     <Card title="Withdraw gUSD" subtitle="Withdraw your deposit">
@@ -178,7 +180,7 @@ function WithdrawCard({
                   type="button"
                   onClick={handleMaxWithdraw}
                   className="text-xs text-primary-600 hover:text-primary-700 font-medium"
-                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                  disabled={isProcessing}
                 >
                   MAX
                 </button>
@@ -214,7 +216,7 @@ function WithdrawCard({
         <Button
           onClick={handleWithdraw}
           disabled={!canWithdraw}
-          isLoading={txStatus === 'signing' || txStatus === 'pending'}
+          isLoading={isProcessing}
           variant="secondary"
           className="w-full"
         >
@@ -223,7 +225,7 @@ function WithdrawCard({
             : txStatus === 'signing'
               ? 'Confirm in Wallet...'
               : txStatus === 'pending'
-                ? 'Processing...'
+                ? 'Withdrawing...'
                 : 'Withdraw gUSD'}
         </Button>
       </div>
@@ -261,8 +263,8 @@ function GainsCard({
     userDeposit &&
     (userDeposit.pendingCsprGains > BigInt(0) || userDeposit.pendingScsprGains > BigInt(0));
 
-  const canClaim =
-    isConnected && hasGains && txStatus !== 'signing' && txStatus !== 'pending';
+  const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
+  const canClaim = isConnected && hasGains && !isProcessing;
 
   return (
     <Card title="Your Gains" subtitle="Accumulated liquidation rewards">
@@ -297,7 +299,7 @@ function GainsCard({
         <Button
           onClick={handleClaim}
           disabled={!canClaim}
-          isLoading={txStatus === 'signing' || txStatus === 'pending'}
+          isLoading={isProcessing}
           variant="primary"
           className="w-full"
         >
@@ -308,7 +310,7 @@ function GainsCard({
               : txStatus === 'signing'
                 ? 'Confirm in Wallet...'
                 : txStatus === 'pending'
-                  ? 'Processing...'
+                  ? 'Claiming...'
                   : 'Claim Gains'}
         </Button>
       </div>
