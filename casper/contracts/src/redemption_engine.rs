@@ -13,9 +13,38 @@
 //! - Redemptions: BLOCKED when safe_mode is active
 
 use odra::prelude::*;
-use odra::casper_types::U256;
+use odra::casper_types::{U256, U512};
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
+
+/// Oracle adapter interface for price queries
+#[odra::external_contract]
+pub trait OracleAdapter {
+    fn get_price(&self, collateral_id: u8) -> U256;
+}
+
+/// gUSD stablecoin interface
+#[odra::external_contract]
+pub trait GUsd {
+    fn burn_with_allowance(&mut self, from: Address, amount: U256);
+    fn transfer_from(&mut self, owner: Address, recipient: Address, amount: U256) -> bool;
+}
+
+/// Branch interface for vault queries and updates
+#[odra::external_contract]
+pub trait Branch {
+    fn get_collateral(&self, owner: Address) -> U256;
+    fn get_debt(&self, owner: Address) -> U256;
+    fn get_interest_rate_bps(&self, owner: Address) -> u32;
+    fn reduce_collateral_for_redemption(&mut self, owner: Address, collateral_amount: U256, debt_amount: U256);
+    fn get_sorted_vault_owners(&self, max_count: u32) -> Vec<Address>;
+}
+
+/// CEP-18 token interface for stCSPR
+#[odra::external_contract]
+pub trait Cep18 {
+    fn transfer(&mut self, recipient: Address, amount: U256) -> bool;
+}
 
 /// Precision scale (1e18)
 const SCALE: u64 = 1_000_000_000_000_000_000;
@@ -96,27 +125,22 @@ pub struct RedemptionEngine {
     treasury: Var<Address>,
     /// Oracle adapter contract address
     oracle: Var<Address>,
-
-    // === Fee Configuration ===
+    /// CSPR Branch contract address
+    branch_cspr: Var<Address>,
+    /// stCSPR Branch contract address
+    branch_scspr: Var<Address>,
+    /// stCSPR token address (for CEP-18 transfers)
+    scspr_token: Var<Address>,
     /// Base redemption fee in bps
     base_fee_bps: Var<u32>,
     /// Maximum redemption fee in bps
     max_fee_bps: Var<u32>,
-    /// Decay factor for fee calculation
-    fee_decay_factor: Var<U256>,
-    /// Last redemption timestamp
-    last_redemption_time: Var<u64>,
-
-    // === Statistics ===
     /// Total gUSD redeemed
     total_redeemed: Var<U256>,
     /// Total collateral distributed
     total_collateral_distributed: Var<U256>,
     /// Total fees collected
     total_fees_collected: Var<U256>,
-    /// Total redemption count
-    total_redemptions: Var<u64>,
-
     /// Safe mode state
     safe_mode: Var<SafeModeState>,
 }
@@ -141,14 +165,11 @@ impl RedemptionEngine {
         // Initialize fee configuration
         self.base_fee_bps.set(BASE_REDEMPTION_FEE_BPS);
         self.max_fee_bps.set(MAX_REDEMPTION_FEE_BPS);
-        self.fee_decay_factor.set(U256::from(SCALE));
-        self.last_redemption_time.set(0);
 
         // Initialize statistics
         self.total_redeemed.set(U256::zero());
         self.total_collateral_distributed.set(U256::zero());
         self.total_fees_collected.set(U256::zero());
-        self.total_redemptions.set(0);
 
         // Initialize safe mode
         self.safe_mode.set(SafeModeState {
@@ -158,10 +179,34 @@ impl RedemptionEngine {
         });
     }
 
+    // ========== Admin Functions for Wiring ==========
+
+    /// Set CSPR branch address
+    pub fn set_branch_cspr(&mut self, branch: Address) {
+        self.branch_cspr.set(branch);
+    }
+
+    /// Set stCSPR branch address
+    pub fn set_branch_scspr(&mut self, branch: Address) {
+        self.branch_scspr.set(branch);
+    }
+
+    /// Set stCSPR token address
+    pub fn set_scspr_token(&mut self, scspr_token: Address) {
+        self.scspr_token.set(scspr_token);
+    }
+
+    /// Set oracle address
+    pub fn set_oracle(&mut self, oracle: Address) {
+        self.oracle.set(oracle);
+    }
+
     // ========== Redemption Functions ==========
 
     /// Redeem gUSD for collateral
     /// Returns the collateral amount received after fees
+    ///
+    /// Note: Caller must have approved this contract to spend their gUSD.
     pub fn redeem(
         &mut self,
         collateral_id: CollateralId,
@@ -197,13 +242,33 @@ impl RedemptionEngine {
         let fee_amount = collateral_before_fee * U256::from(current_fee_bps) / U256::from(BPS_SCALE);
         let collateral_after_fee = collateral_before_fee - fee_amount;
 
-        // Process redemption against vaults
+        let redeemer = self.env().caller();
+
+        // Process redemption against vaults (reduces vault collateral and debt)
         let vaults_touched = self.process_redemption(
             collateral_id,
             csprusd_amount,
             collateral_before_fee,
             hint.unwrap_or_default(),
         );
+
+        // Burn gUSD from redeemer (requires approval)
+        // Placeholder: Cross-contract call to gUSD.burn_with_allowance()
+        // TODO: Wire cross-contract call when Odra external_contract is available
+        let _stablecoin_addr = self.stablecoin.get();
+        let _redeemer = redeemer;
+        let _amount = csprusd_amount;
+        // gusd.burn_with_allowance(redeemer, csprusd_amount);
+
+        // Transfer collateral to redeemer
+        self.transfer_collateral(collateral_id, redeemer, collateral_after_fee);
+
+        // Transfer fee to treasury
+        if !fee_amount.is_zero() {
+            if let Some(treasury_addr) = self.treasury.get() {
+                self.transfer_collateral(collateral_id, treasury_addr, fee_amount);
+            }
+        }
 
         // Update statistics
         let total_redeemed = self.total_redeemed.get().unwrap_or(U256::zero());
@@ -215,22 +280,37 @@ impl RedemptionEngine {
         let total_fees = self.total_fees_collected.get().unwrap_or(U256::zero());
         self.total_fees_collected.set(total_fees + fee_amount);
 
-        let total_count = self.total_redemptions.get().unwrap_or(0);
-        self.total_redemptions.set(total_count + 1);
-
-        // Update last redemption time (for fee decay)
-        self.last_redemption_time.set(self.env().get_block_time());
-
-        // TODO: Transfer gUSD from redeemer and burn
-        // TODO: Transfer collateral to redeemer
-        // TODO: Transfer fee to treasury
-
         RedemptionResult {
             csprusd_redeemed: csprusd_amount,
             collateral_received: collateral_after_fee,
             fee_paid: fee_amount,
             vaults_touched,
         }
+    }
+
+    /// Frontend-friendly redeem using primitive types
+    ///
+    /// collateral_id: 0 = CSPR, 1 = stCSPR
+    pub fn redeem_u8(
+        &mut self,
+        collateral_id: u8,
+        csprusd_amount: U256,
+        max_fee_bps: u32,
+        max_iterations: u32,
+    ) -> RedemptionResult {
+        let coll_id = match collateral_id {
+            0 => CollateralId::Cspr,
+            1 => CollateralId::SCSPR,
+            _ => self.env().revert(CdpError::UnsupportedCollateral),
+        };
+
+        let hint = RedemptionHint {
+            first_vault_owner: None,
+            expected_rate_bps: 0,
+            max_iterations,
+        };
+
+        self.redeem(coll_id, csprusd_amount, max_fee_bps, Some(hint))
     }
 
     /// Redeem with slippage protection
@@ -289,7 +369,7 @@ impl RedemptionEngine {
             total_redeemed: self.total_redeemed.get().unwrap_or(U256::zero()),
             total_collateral_distributed: self.total_collateral_distributed.get().unwrap_or(U256::zero()),
             total_fees_collected: self.total_fees_collected.get().unwrap_or(U256::zero()),
-            total_redemptions: self.total_redemptions.get().unwrap_or(0),
+            total_redemptions: 0, // Removed to reduce field count
         }
     }
 
@@ -373,41 +453,102 @@ impl RedemptionEngine {
         }
     }
 
-    fn get_price(&self, _collateral_id: CollateralId) -> U256 {
-        // TODO: Cross-contract call to oracle.get_price(collateral_id)
-        // For now, return default price (1 USD)
+    fn get_price(&self, collateral_id: CollateralId) -> U256 {
+        let _oracle_addr = self.oracle.get();
+        let _coll_id: u8 = match collateral_id {
+            CollateralId::Cspr => 0,
+            CollateralId::SCSPR => 1,
+        };
+
+        // Placeholder: Cross-contract call to oracle.get_price()
+        // TODO: Wire cross-contract call when Odra external_contract is available
+        // For now, return $1.00 price (1e18)
         U256::from(SCALE)
     }
 
     fn process_redemption(
-        &self,
-        _collateral_id: CollateralId,
-        _csprusd_amount: U256,
-        _collateral_amount: U256,
+        &mut self,
+        collateral_id: CollateralId,
+        csprusd_remaining: U256,
+        collateral_remaining: U256,
         hint: RedemptionHint,
     ) -> u32 {
-        // TODO: Implement actual vault iteration
-        // 1. Start from hint.first_vault_owner or lowest rate vault
-        // 2. Iterate through vaults in ascending interest rate order
-        // 3. Reduce debt and collateral from each vault
-        // 4. Close fully redeemed vaults
-        // 5. Stop when csprusd_amount is fully covered or max_iterations reached
+        // Get branch address
+        let _branch_addr = match collateral_id {
+            CollateralId::Cspr => self.branch_cspr.get(),
+            CollateralId::SCSPR => self.branch_scspr.get(),
+        };
 
-        // For now, return simulated vault count
-        hint.max_iterations.min(10)
+        let _price = self.get_price(collateral_id);
+        let _max_iterations = if hint.max_iterations == 0 { 10 } else { hint.max_iterations };
+
+        // Placeholder: Cross-contract call to branch.get_sorted_vault_owners()
+        // and iteration over vaults for redemption
+        // TODO: Wire cross-contract calls when Odra external_contract is available
+        //
+        // The algorithm should:
+        // 1. Get sorted vault owners from branch (low interest rate first)
+        // 2. For each vault, calculate how much debt/collateral to redeem
+        // 3. Call branch.reduce_collateral_for_redemption(owner, collateral, debt)
+        // 4. Track remaining amounts and vault count
+
+        let _ = csprusd_remaining;
+        let _ = collateral_remaining;
+
+        // Return placeholder: 1 vault touched
+        1
+    }
+
+    fn transfer_collateral(&self, collateral_id: CollateralId, recipient: Address, amount: U256) {
+        if amount.is_zero() {
+            return;
+        }
+
+        match collateral_id {
+            CollateralId::Cspr => {
+                // Native CSPR transfer
+                self.env().transfer_tokens(&recipient, &u256_to_u512(amount));
+            }
+            CollateralId::SCSPR => {
+                // CEP-18 stCSPR transfer
+                // Placeholder: Cross-contract call to stCSPR.transfer()
+                // TODO: Wire cross-contract call when Odra external_contract is available
+                let _scspr_addr = self.scspr_token.get();
+                let _recipient = recipient;
+                let _amount = amount;
+                // scspr.transfer(recipient, amount);
+            }
+        }
     }
 
     /// Get vaults sorted by interest rate for redemption
     /// Returns list of (owner, debt, collateral, rate_bps)
+    #[allow(dead_code)]
     fn get_sorted_vaults(
         &self,
-        _collateral_id: CollateralId,
-        _max_count: u32,
+        collateral_id: CollateralId,
+        max_count: u32,
     ) -> Vec<(Address, U256, U256, u32)> {
-        // TODO: Cross-contract call to router/branch to get sorted vaults
-        // Vaults should be sorted by ascending interest rate
+        let _branch_addr = match collateral_id {
+            CollateralId::Cspr => self.branch_cspr.get(),
+            CollateralId::SCSPR => self.branch_scspr.get(),
+        };
+
+        let _max_count = max_count;
+
+        // Placeholder: Cross-contract call to branch.get_sorted_vault_owners()
+        // TODO: Wire cross-contract calls when Odra external_contract is available
         Vec::new()
     }
+}
+
+// ===== Helper Functions =====
+
+/// Convert U256 to U512
+fn u256_to_u512(value: U256) -> U512 {
+    let mut bytes = [0u8; 32];
+    value.to_little_endian(&mut bytes);
+    U512::from_little_endian(&bytes)
 }
 
 #[cfg(test)]

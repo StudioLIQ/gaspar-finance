@@ -139,6 +139,36 @@ impl CsprUsd {
         self.burn_from_internal(from, amount);
     }
 
+    /// Burn tokens using allowance (for SP/Redemption flows)
+    ///
+    /// This allows authorized protocol contracts to burn gUSD that users
+    /// have approved, without needing minter privileges.
+    pub fn burn_with_allowance(&mut self, from: Address, amount: U256) {
+        let spender = self.env().caller();
+
+        // Require caller is authorized protocol (SP or Redemption Engine)
+        self.require_authorized_minter();
+
+        let current_allowance = self.allowance(from, spender);
+        if current_allowance < amount {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
+
+        // Burn the tokens
+        self.burn_from_internal(from, amount);
+
+        // Reduce allowance
+        self.approve_internal(from, spender, current_allowance - amount);
+    }
+
+    /// Protocol transfer: move gUSD between addresses (only authorized minters)
+    ///
+    /// Used for internal protocol flows (e.g., SP gains distribution).
+    pub fn protocol_transfer(&mut self, from: Address, to: Address, amount: U256) {
+        self.require_authorized_minter();
+        self.transfer_internal(from, to, amount);
+    }
+
     // ========== Admin Functions ==========
 
     /// Add an authorized minter (admin only via registry)

@@ -11,6 +11,8 @@ import { shortenPublicKey, cn } from '@/lib/utils';
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
   { href: '/lst', label: 'LST' },
+  { href: '/stability-pool', label: 'Stability Pool' },
+  { href: '/redeem', label: 'Redeem' },
 ];
 
 export function Header() {

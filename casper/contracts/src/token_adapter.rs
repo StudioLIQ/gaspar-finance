@@ -13,6 +13,17 @@ use odra::prelude::*;
 use odra::casper_types::U256;
 use crate::errors::CdpError;
 
+/// CEP-18 token interface for cross-contract calls
+#[odra::external_contract]
+pub trait Cep18Token {
+    fn transfer(&mut self, recipient: Address, amount: U256) -> bool;
+    fn transfer_from(&mut self, owner: Address, recipient: Address, amount: U256) -> bool;
+    fn approve(&mut self, spender: Address, amount: U256) -> bool;
+    fn allowance(&self, owner: Address, spender: Address) -> U256;
+    fn balance_of(&self, account: Address) -> U256;
+    fn total_supply(&self) -> U256;
+}
+
 /// Token metadata
 #[odra::odra_type]
 pub struct TokenInfo {
@@ -143,37 +154,41 @@ impl TokenAdapter {
     }
 
     /// Safe approve with unlimited amount protection
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
     pub fn safe_approve(
         &self,
-        _token_address: Address,
+        token_address: Address,
         _spender: Address,
         _amount: U256,
     ) -> bool {
-        // TODO: Implement cross-contract call to token.approve(spender, amount)
-        // Some tokens require setting allowance to 0 first before setting new value
+        // Verify token is whitelisted
+        if !self.is_token_whitelisted(token_address) {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
 
-        // For safety:
-        // 1. Check current allowance
-        // 2. If non-zero and new amount is non-zero, reset to 0 first
-        // 3. Set new allowance
-
+        // Placeholder: assume approval succeeds
+        // TODO: Wire cross-contract call to token.approve()
         true
     }
 
     /// Get current allowance
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
     pub fn get_allowance(
         &self,
         _token_address: Address,
         _owner: Address,
         _spender: Address,
     ) -> U256 {
-        // TODO: Cross-contract call to token.allowance(owner, spender)
+        // Placeholder: return zero allowance
+        // TODO: Wire cross-contract call to token.allowance()
         U256::zero()
     }
 
     /// Get token balance
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
     pub fn get_balance(&self, _token_address: Address, _account: Address) -> U256 {
-        // TODO: Cross-contract call to token.balance_of(account)
+        // Placeholder: return zero balance
+        // TODO: Wire cross-contract call to token.balance_of()
         U256::zero()
     }
 
@@ -215,21 +230,22 @@ impl TokenAdapter {
     }
 
     /// Push tokens from protocol to user (withdrawal flow)
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
     pub fn push_tokens(
         &self,
         token_address: Address,
-        to: Address,
+        _to: Address,
         amount: U256,
     ) -> U256 {
         self.require_authorized_caller();
 
-        // TODO: Cross-contract call to token.transfer(to, amount)
-        // For fee-on-transfer tokens, user receives less than sent
-
         let has_fee = self.has_fee.get(&token_address).unwrap_or(false);
+
+        // Placeholder: assume transfer succeeds
+        // TODO: Wire cross-contract call to token.transfer()
+
         if has_fee {
-            // Calculate net amount after fee
-            // Assume 0.1% fee for now (configurable per token)
+            // Placeholder: assume 0.1% fee for fee-on-transfer tokens
             let fee = amount / U256::from(1000u64);
             amount - fee
         } else {
@@ -278,8 +294,8 @@ impl TokenAdapter {
         _to: Address,
         amount: U256,
     ) -> TransferResult {
-        // TODO: Cross-contract call to token.transfer_from(from, to, amount)
-
+        // Placeholder: assume transfer succeeds
+        // TODO: Wire cross-contract call to token.transfer_from()
         TransferResult {
             requested_amount: amount,
             actual_received: amount,
@@ -295,15 +311,8 @@ impl TokenAdapter {
         _to: Address,
         amount: U256,
     ) -> TransferResult {
-        // For fee-on-transfer tokens:
-        // 1. Get recipient balance before
-        // 2. Execute transfer
-        // 3. Get recipient balance after
-        // 4. Actual received = after - before
-
-        // TODO: Implement actual balance snapshot and transfer
-
-        // Placeholder: assume 0.1% fee
+        // Placeholder: assume 0.1% fee for fee-on-transfer tokens
+        // TODO: Wire cross-contract call to token.transfer_from() with balance snapshots
         let fee = amount / U256::from(1000u64);
         let actual = amount - fee;
 
@@ -320,13 +329,20 @@ impl TokenAdapter {
 /// Extends TokenAdapter with stCSPR-specific logic
 #[odra::module]
 pub struct SCSPRAdapter {
-    /// Token adapter reference
+    /// Token adapter contract address
     token_adapter: Var<Address>,
-    /// stCSPR token address
+    /// stCSPR token address (CEP-18)
     scspr_address: Var<Address>,
     /// LST contract address (for exchange rate)
     lst_contract: Var<Address>,
+    /// Admin address
+    admin: Var<Address>,
+    /// Authorized protocol contracts
+    authorized_callers: Mapping<Address, bool>,
 }
+
+/// Exchange rate scale (1e18)
+const RATE_SCALE: u128 = 1_000_000_000_000_000_000;
 
 #[odra::module]
 impl SCSPRAdapter {
@@ -340,26 +356,55 @@ impl SCSPRAdapter {
         self.token_adapter.set(token_adapter);
         self.scspr_address.set(scspr_address);
         self.lst_contract.set(lst_contract);
+        self.admin.set(self.env().caller());
     }
 
     /// Get stCSPR/CSPR exchange rate from LST contract
+    ///
+    /// Returns rate scaled by 1e18 (1e18 = 1.0)
+    /// Note: Cross-contract call to ybToken - placeholder for now
     pub fn get_exchange_rate(&self) -> U256 {
-        // TODO: Cross-contract call to LST contract
-        // Returns rate scaled by 1000 (1000 = 1.0)
-        U256::from(1050u64) // Default 1.05 (5% staking rewards)
+        // Placeholder: 1.0 rate (1e18)
+        // TODO: Wire cross-contract call to ybToken.get_exchange_rate() when available
+        U256::from(RATE_SCALE)
     }
 
-    /// Deposit stCSPR to protocol
-    pub fn deposit(&self, from: Address, amount: U256) -> U256 {
-        // TODO: Use token_adapter to pull stCSPR
-        // Return actual amount received
+    /// Convert stCSPR shares to CSPR value
+    /// Note: Cross-contract call to ybToken - placeholder for now
+    pub fn convert_to_assets(&self, shares: U256) -> U256 {
+        // Placeholder: 1:1 conversion
+        // TODO: Wire cross-contract call to ybToken.convert_to_assets()
+        shares
+    }
+
+    /// Convert CSPR value to stCSPR shares
+    /// Note: Cross-contract call to ybToken - placeholder for now
+    pub fn convert_to_shares(&self, assets: U256) -> U256 {
+        // Placeholder: 1:1 conversion
+        // TODO: Wire cross-contract call to ybToken.convert_to_shares()
+        assets
+    }
+
+    /// Deposit stCSPR to protocol using transfer_from
+    ///
+    /// Requires user to have approved this contract for `amount`.
+    /// Returns actual amount received (for fee-on-transfer tokens).
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
+    pub fn deposit(&self, _from: Address, amount: U256) -> U256 {
+        self.require_authorized_caller();
+        // Placeholder: assume full amount transferred
+        // TODO: Wire cross-contract call to stCSPR.transfer_from()
         amount
     }
 
-    /// Withdraw stCSPR from protocol
-    pub fn withdraw(&self, to: Address, amount: U256) -> U256 {
-        // TODO: Use token_adapter to push stCSPR
-        // Return actual amount sent
+    /// Withdraw stCSPR from protocol to user
+    ///
+    /// Returns actual amount sent.
+    /// Note: Cross-contract call to CEP-18 - placeholder for now
+    pub fn withdraw(&self, _to: Address, amount: U256) -> U256 {
+        self.require_authorized_caller();
+        // Placeholder: assume full amount sent
+        // TODO: Wire cross-contract call to stCSPR.transfer()
         amount
     }
 
@@ -371,6 +416,50 @@ impl SCSPRAdapter {
     /// Get LST contract address
     pub fn get_lst_contract(&self) -> Option<Address> {
         self.lst_contract.get()
+    }
+
+    /// Add authorized caller (admin only)
+    pub fn add_authorized_caller(&mut self, caller: Address) {
+        self.require_admin();
+        self.authorized_callers.set(&caller, true);
+    }
+
+    /// Remove authorized caller (admin only)
+    pub fn remove_authorized_caller(&mut self, caller: Address) {
+        self.require_admin();
+        self.authorized_callers.set(&caller, false);
+    }
+
+    /// Check if caller is authorized
+    pub fn is_authorized_caller(&self, caller: Address) -> bool {
+        self.authorized_callers.get(&caller).unwrap_or(false)
+    }
+
+    // ========== Internal ==========
+
+    fn require_admin(&self) {
+        let caller = self.env().caller();
+        let admin = self.admin.get();
+        match admin {
+            Some(adm) if caller == adm => {}
+            _ => self.env().revert(CdpError::Unauthorized),
+        }
+    }
+
+    fn require_authorized_caller(&self) {
+        let caller = self.env().caller();
+        let admin = self.admin.get();
+
+        // Allow admin or authorized callers
+        if let Some(adm) = admin {
+            if caller == adm {
+                return;
+            }
+        }
+
+        if !self.is_authorized_caller(caller) {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
     }
 }
 

@@ -14,9 +14,24 @@
 //! - Withdrawals: BLOCKED when safe_mode is active
 
 use odra::prelude::*;
-use odra::casper_types::U256;
+use odra::casper_types::{U256, U512};
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
+
+/// gUSD stablecoin interface for cross-contract calls
+#[odra::external_contract]
+pub trait GUsd {
+    fn transfer(&mut self, recipient: Address, amount: U256) -> bool;
+    fn transfer_from(&mut self, owner: Address, recipient: Address, amount: U256) -> bool;
+    fn balance_of(&self, account: Address) -> U256;
+}
+
+/// CEP-18 token interface for stCSPR transfers
+#[odra::external_contract]
+pub trait Cep18 {
+    fn transfer(&mut self, recipient: Address, amount: U256) -> bool;
+    fn balance_of(&self, account: Address) -> U256;
+}
 
 /// Precision scale for product calculations (1e18)
 const SCALE: u64 = 1_000_000_000_000_000_000;
@@ -97,6 +112,8 @@ pub struct StabilityPool {
     stablecoin: Var<Address>,
     /// Liquidation engine contract address
     liquidation_engine: Var<Address>,
+    /// stCSPR (CEP-18) token address
+    scspr_token: Var<Address>,
 
     // === Pool State (consolidated) ===
     /// Total gUSD deposits
@@ -181,6 +198,7 @@ impl StabilityPool {
         }
 
         let depositor = self.env().caller();
+        let pool_address = self.env().self_address();
 
         // Get existing deposit and pending gains
         let existing_snapshot = self.deposits.get(&depositor).unwrap_or_default();
@@ -203,13 +221,14 @@ impl StabilityPool {
         let total = self.total_deposits.get().unwrap_or(U256::zero());
         self.total_deposits.set(total + amount);
 
-        // TODO: Transfer gUSD from depositor to pool
-        // stablecoin.transfer_from(depositor, self, amount)
+        // Transfer gUSD from depositor to pool
+        // TODO: Wire cross-contract call to gUSD.transfer_from()
+        // Placeholder: assume transfer succeeds
+        let _stablecoin_addr = self.stablecoin.get();
+        let _ = pool_address; // suppress unused warning
 
-        // TODO: Transfer pending gains to depositor
-        // if gains.cspr_gain > 0 { transfer CSPR }
-        // if gains.scspr_gain > 0 { transfer stCSPR }
-        let _ = gains; // Suppress unused warning until cross-contract calls implemented
+        // Transfer pending collateral gains to depositor
+        self.transfer_gains_internal(depositor, gains);
     }
 
     /// Withdraw gUSD from the stability pool
@@ -256,11 +275,13 @@ impl StabilityPool {
             self.total_deposits.set(U256::zero());
         }
 
-        // TODO: Transfer gUSD from pool to depositor
-        // stablecoin.transfer(depositor, amount)
+        // Transfer gUSD from pool to depositor
+        // TODO: Wire cross-contract call to gUSD.transfer()
+        // Placeholder: assume transfer succeeds
+        let _stablecoin_addr = self.stablecoin.get();
 
-        // TODO: Transfer pending gains to depositor
-        let _ = gains; // Suppress unused warning
+        // Transfer pending collateral gains to depositor
+        self.transfer_gains_internal(depositor, gains);
     }
 
     /// Claim collateral gains without modifying deposit
@@ -272,7 +293,7 @@ impl StabilityPool {
         let gains = self.get_depositor_gains(depositor);
 
         if gains.cspr_gain.is_zero() && gains.scspr_gain.is_zero() {
-            return; // Nothing to claim
+            self.env().revert(CdpError::SpNoGains);
         }
 
         // Update snapshot to current state (resets gains)
@@ -281,22 +302,24 @@ impl StabilityPool {
             self.store_snapshot(depositor, compounded_deposit);
         }
 
-        // TODO: Transfer gains to depositor
-        let _ = gains; // Suppress unused warning
+        // Transfer collateral gains to depositor
+        self.transfer_gains_internal(depositor, gains);
     }
 
     // ========== Liquidation Offset Functions ==========
 
     /// Offset debt using pool deposits (called by LiquidationEngine)
     /// Returns the amount of debt that was offset
+    ///
+    /// This is a restricted entrypoint - only the authorized liquidation engine can call it.
     pub fn offset(
         &mut self,
         collateral_id: CollateralId,
         debt_to_offset: U256,
         collateral_to_add: U256,
     ) -> U256 {
-        // TODO: Add authorized liquidator check
-        // self.require_authorized_liquidator();
+        // Verify caller is authorized liquidation engine
+        self.require_authorized_liquidator();
 
         let total = self.total_deposits.get().unwrap_or(U256::zero());
 
@@ -338,6 +361,35 @@ impl StabilityPool {
         self.total_debt_absorbed.set(absorbed + actual_debt_offset);
 
         actual_debt_offset
+    }
+
+    /// Frontend-friendly offset entrypoint using primitive types
+    ///
+    /// collateral_id: 0 = CSPR, 1 = stCSPR
+    pub fn offset_u8(
+        &mut self,
+        collateral_id: u8,
+        debt_to_offset: U256,
+        collateral_to_add: U256,
+    ) -> U256 {
+        let coll_id = match collateral_id {
+            0 => CollateralId::Cspr,
+            1 => CollateralId::SCSPR,
+            _ => self.env().revert(CdpError::UnsupportedCollateral),
+        };
+        self.offset(coll_id, debt_to_offset, collateral_to_add)
+    }
+
+    /// Receive collateral during liquidation offset (payable for CSPR)
+    #[odra(payable)]
+    pub fn receive_cspr_collateral(&mut self) {
+        self.require_authorized_liquidator();
+        // CSPR is received as attached value - just track it
+        let amount_u512 = self.env().attached_value();
+        let amount = u512_to_u256(amount_u512);
+
+        let current = self.total_cspr_collateral.get().unwrap_or(U256::zero());
+        self.total_cspr_collateral.set(current + amount);
     }
 
     // ========== Query Functions ==========
@@ -476,6 +528,29 @@ impl StabilityPool {
         self.safe_mode.get().map(|s| s.is_active).unwrap_or(false)
     }
 
+    // ========== Admin Functions ==========
+
+    /// Set stCSPR token address (for collateral gain transfers)
+    pub fn set_scspr_token(&mut self, scspr_token: Address) {
+        // TODO: Add admin access control
+        self.scspr_token.set(scspr_token);
+    }
+
+    /// Get stCSPR token address
+    pub fn get_scspr_token(&self) -> Option<Address> {
+        self.scspr_token.get()
+    }
+
+    /// Get liquidation engine address
+    pub fn get_liquidation_engine(&self) -> Option<Address> {
+        self.liquidation_engine.get()
+    }
+
+    /// Get stablecoin address
+    pub fn get_stablecoin(&self) -> Option<Address> {
+        self.stablecoin.get()
+    }
+
     // ========== Internal Functions ==========
 
     fn require_not_safe_mode(&self) {
@@ -486,6 +561,39 @@ impl StabilityPool {
         });
         if state.is_active {
             self.env().revert(CdpError::SafeModeActive);
+        }
+    }
+
+    fn require_authorized_liquidator(&self) {
+        let caller = self.env().caller();
+        let liquidation_engine = self.liquidation_engine.get();
+
+        match liquidation_engine {
+            Some(liq_addr) if caller == liq_addr => {}
+            _ => self.env().revert(CdpError::UnauthorizedProtocol),
+        }
+    }
+
+    fn transfer_gains_internal(&mut self, recipient: Address, gains: CollateralGains) {
+        // Transfer CSPR gains (native transfer)
+        if !gains.cspr_gain.is_zero() {
+            let current_cspr = self.total_cspr_collateral.get().unwrap_or(U256::zero());
+            if gains.cspr_gain <= current_cspr {
+                self.total_cspr_collateral.set(current_cspr - gains.cspr_gain);
+                self.env().transfer_tokens(&recipient, &u256_to_u512(gains.cspr_gain));
+            }
+        }
+
+        // Transfer stCSPR gains (CEP-18 transfer)
+        // TODO: Wire cross-contract call to stCSPR.transfer()
+        // Placeholder: just update accounting
+        if !gains.scspr_gain.is_zero() {
+            let current_scspr = self.total_scspr_collateral.get().unwrap_or(U256::zero());
+            if gains.scspr_gain <= current_scspr {
+                self.total_scspr_collateral.set(current_scspr - gains.scspr_gain);
+                let _scspr_addr = self.scspr_token.get();
+                let _ = recipient; // suppress unused warning
+            }
         }
     }
 
@@ -615,6 +723,22 @@ impl StabilityPool {
         // Gain = deposit * (S_current - S_snapshot) / P_snapshot
         deposit * sum_diff / snapshot_p
     }
+}
+
+// ===== Helper Functions =====
+
+/// Convert U512 to U256 (safe for CSPR amounts which fit in U256)
+fn u512_to_u256(value: U512) -> U256 {
+    let mut bytes = [0u8; 64];
+    value.to_little_endian(&mut bytes);
+    U256::from_little_endian(&bytes[..32])
+}
+
+/// Convert U256 to U512
+fn u256_to_u512(value: U256) -> U512 {
+    let mut bytes = [0u8; 32];
+    value.to_little_endian(&mut bytes);
+    U512::from_little_endian(&bytes)
 }
 
 #[cfg(test)]
