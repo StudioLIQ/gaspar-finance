@@ -39,9 +39,9 @@ export function Header() {
       <div className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo.svg" alt="GasperFinance" width={40} height={40} />
+            <Image src="/logo.svg" alt="GasparFinance" width={40} height={40} />
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">GasperFinance</h1>
+              <h1 className="text-lg font-semibold text-gray-900">GasparFinance</h1>
               <p className="text-xs text-gray-500">
                 {CASPER_TESTNET.name} • {SUPPORTED_WALLET}
               </p>

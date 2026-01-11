@@ -21,7 +21,7 @@ export default function Home() {
         </div>
 
         <footer className="mt-16 text-center text-sm text-gray-600 pb-8">
-          <p>GasperFinance Protocol • Casper Testnet • Casper Wallet</p>
+          <p>GasparFinance Protocol • Casper Testnet • Casper Wallet</p>
         </footer>
       </main>
     </div>

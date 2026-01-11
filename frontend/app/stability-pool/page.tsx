@@ -400,7 +400,7 @@ export default function StabilityPoolPage() {
         </div>
 
         <footer className="mt-16 text-center text-sm text-gray-600 pb-8">
-          <p>GasperFinance Protocol - Stability Pool</p>
+          <p>GasparFinance Protocol - Stability Pool</p>
         </footer>
       </main>
     </div>

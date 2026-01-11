@@ -1,4 +1,4 @@
-# GasperFinance Frontend
+# GasparFinance Frontend
 
 Casper testnet–only frontend. **Casper Wallet** is the only supported wallet.
 

@@ -93,7 +93,7 @@ export default function LstPage() {
         </div>
 
         <footer className="mt-16 text-center text-sm text-gray-600 pb-8">
-          <p>GasperFinance Protocol - Liquid Staking (stCSPR)</p>
+          <p>GasparFinance Protocol - Liquid Staking (stCSPR)</p>
         </footer>
       </main>
     </div>

@@ -3,7 +3,7 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'GasperFinance | Casper Testnet',
+  title: 'GasparFinance | Casper Testnet',
   description: 'Casper-native CDP protocol frontend for Casper Testnet',
   icons: {
     icon: '/favicon.svg',
