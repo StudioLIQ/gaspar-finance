@@ -56,7 +56,7 @@ export function CdpOpenVaultCard({
   const { isConnected } = useCasperWallet();
   const [collateralAmount, setCollateralAmount] = useState('');
   const [borrowAmount, setBorrowAmount] = useState('');
-  const [interestRate, setInterestRate] = useState('5'); // Default 5%
+  const [interestRate, setInterestRate] = useState('5.0'); // Default 5.0%
   const [preview, setPreview] = useState<ReturnType<typeof previewOpenVault>>(null);
 
   const collateralLabel = collateralType === 'cspr' ? 'CSPR' : 'stCSPR';
@@ -80,6 +80,15 @@ export function CdpOpenVaultCard({
     if (success) {
       setCollateralAmount('');
       setBorrowAmount('');
+    }
+  };
+
+  // Only allow one decimal place for interest rate (e.g., 5.0, 5.5, 10.3)
+  const handleInterestRateChange = (value: string) => {
+    // Allow empty, or numbers with up to 1 decimal place
+    if (value === '' || /^\d*\.?\d{0,1}$/.test(value)) {
+      // Clamp to 0-40 range on blur, but allow typing freely
+      setInterestRate(value);
     }
   };
 
@@ -182,7 +191,7 @@ export function CdpOpenVaultCard({
           inputMode="decimal"
           placeholder="5.0"
           value={interestRate}
-          onChange={(e) => setInterestRate(e.target.value)}
+          onChange={(e) => handleInterestRateChange(e.target.value)}
           rightElement={<span className="text-sm font-medium text-gray-500">%</span>}
           disabled={isProcessing}
         />
