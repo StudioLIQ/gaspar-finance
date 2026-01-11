@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import type { LstExchangeRate, TxStatus } from '@/hooks/useLst';
-import { formatCsprAmount } from '@/lib/casperRpc';
+import { formatCsprAmount, parseCsprInput } from '@/lib/casperRpc';
+
+// Casper network minimum stake requirement
+const MIN_STAKE_CSPR = BigInt('500000000000'); // 500 CSPR in motes
 
 interface LstStakeCardProps {
   exchangeRate: LstExchangeRate | null;
@@ -63,7 +66,11 @@ export function LstStakeCard({
   };
 
   const isLoading = txStatus === 'signing' || txStatus === 'pending';
-  const canStake = isConnected && amount && preview && !isLoading;
+
+  // Check minimum stake requirement
+  const parsedAmount = parseCsprInput(amount);
+  const isBelowMinimum = parsedAmount !== null && parsedAmount < MIN_STAKE_CSPR;
+  const canStake = isConnected && amount && preview && !isLoading && !isBelowMinimum;
 
   return (
     <Card title="Stake CSPR" subtitle="Deposit CSPR to receive stCSPR">
@@ -119,6 +126,15 @@ export function LstStakeCard({
           </div>
         )}
 
+        {/* Minimum Stake Warning */}
+        {isBelowMinimum && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-sm text-yellow-700">
+              Minimum stake is 500 CSPR (Casper network requirement)
+            </p>
+          </div>
+        )}
+
         {/* Error Display */}
         {txError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -143,11 +159,10 @@ export function LstStakeCard({
         </Button>
 
         {/* Info */}
-        <p className="text-xs text-gray-500 text-center">
-          Staking requires a proxy_caller WASM for payable calls.
-          <br />
-          Your stCSPR balance will increase as staking rewards accrue.
-        </p>
+        <div className="text-xs text-gray-500 space-y-1">
+          <p>• Minimum stake: 500 CSPR</p>
+          <p>• Your stCSPR balance will increase as staking rewards accrue</p>
+        </div>
       </div>
     </Card>
   );

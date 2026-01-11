@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
-import { CASPER_TESTNET, SUPPORTED_WALLET } from '@/lib/config';
+import { SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
 import {
   getAccountCsprBalance,
@@ -90,12 +90,10 @@ export function Header() {
       <div className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo.svg" alt="GasparFinance" width={40} height={40} />
+            <Image src="/protocol-logo.webp" alt="Protocol logo" width={40} height={40} />
             <div>
               <h1 className="text-lg font-semibold text-gray-900">GasparFinance</h1>
-              <p className="text-xs text-gray-500">
-                {CASPER_TESTNET.name} • {SUPPORTED_WALLET}
-              </p>
+              <p className="text-xs text-gray-500">{SUPPORTED_WALLET}</p>
             </div>
           </Link>
 
@@ -122,6 +120,11 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Network Badge */}
+          <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+            Testnet
+          </span>
+
           {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
             <div className="hidden md:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
