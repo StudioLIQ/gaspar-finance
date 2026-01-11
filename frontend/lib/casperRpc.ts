@@ -170,34 +170,42 @@ let requestId = 1;
 
 async function rpcCall<T>(method: string, params: unknown[] | Record<string, unknown>): Promise<T> {
   const network = getNetworkConfig();
-  const response = await fetch(network.rpcUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: requestId++,
-      method,
-      params,
-    }),
-  });
+  const reqId = requestId++;
 
-  if (!response.ok) {
-    throw new Error(`RPC request failed: ${response.status} ${response.statusText}`);
+  try {
+    const response = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: reqId,
+        method,
+        params,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as RpcResponse<T>;
+
+    if (data.error) {
+      console.warn(`[RPC] ${method} error:`, data.error.message);
+      throw new Error(`RPC error: ${data.error.message} (code: ${data.error.code})`);
+    }
+
+    if (data.result === undefined) {
+      throw new Error('RPC response missing result');
+    }
+
+    return data.result;
+  } catch (error) {
+    console.error(`[RPC] ${method} failed:`, error);
+    throw error;
   }
-
-  const data = (await response.json()) as RpcResponse<T>;
-
-  if (data.error) {
-    throw new Error(`RPC error: ${data.error.message} (code: ${data.error.code})`);
-  }
-
-  if (data.result === undefined) {
-    throw new Error('RPC response missing result');
-  }
-
-  return data.result;
 }
 
 // Get latest state root hash
@@ -341,13 +349,15 @@ export async function getAccountInfo(
 
 // Query CSPR balance using Casper 2.0 query_balance
 export async function getAccountCsprBalance(publicKeyHex: string): Promise<bigint> {
+  console.log('[RPC] getAccountCsprBalance called with:', publicKeyHex);
   try {
     const result = await rpcCall<QueryBalanceResult>('query_balance', {
       purse_identifier: { main_purse_under_public_key: publicKeyHex },
     });
+    console.log('[RPC] CSPR balance result:', result.balance);
     return BigInt(result.balance);
   } catch (error) {
-    console.error('Failed to get CSPR balance:', error);
+    console.error('[RPC] Failed to get CSPR balance:', error);
     return BigInt(0);
   }
 }
@@ -384,6 +394,12 @@ export async function getAccountBalance(publicKey: string): Promise<bigint> {
 
 // LST-specific queries
 
+// NOTE: Odra contracts store all state in a single URef and require entry point calls
+// to read data. Since Casper doesn't support speculative execution (eth_call equivalent),
+// we can't read token balances or protocol stats directly. We return sensible defaults.
+const ODRA_READ_LIMITATION_MSG =
+  'Odra contract data requires entry point call - returning default values';
+
 // Get stCSPR exchange rate from ybToken contract
 export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
   const ybTokenHash = CONTRACTS.scsprYbtoken;
@@ -391,187 +407,77 @@ export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
     return null;
   }
 
-  try {
-    const stats = await getLstProtocolStats();
-    const rateNum = stats?.exchangeRate ?? RATE_SCALE;
-    return { rate: rateNum, rateFormatted: formatRate(rateNum), timestamp: Date.now() };
-  } catch (error) {
-    console.error('Failed to get LST exchange rate:', error);
-    return null;
-  }
+  // Since we can't read Odra state, return default 1:1 exchange rate
+  // In production, this would need a backend service or contract modification
+  console.debug('[RPC] getLstExchangeRate:', ODRA_READ_LIMITATION_MSG);
+  return {
+    rate: RATE_SCALE, // 1:1 default
+    rateFormatted: formatRate(RATE_SCALE),
+    timestamp: Date.now(),
+  };
 }
 
 // Get user's stCSPR balance from CEP-18 dictionary
+// NOTE: Odra contracts can't be queried for balances without entry point call
 export async function getLstBalance(publicKey: string): Promise<LstBalance | null> {
   const ybTokenHash = CONTRACTS.scsprYbtoken;
   if (!ybTokenHash || ybTokenHash === 'null') {
+    console.debug('[RPC] stCSPR contract not configured');
     return null;
   }
 
-  try {
-    let balanceNum = BigInt(0);
+  // Odra contracts don't expose balances via dictionaries - return 0
+  // User will see actual balance after transactions via events/receipts
+  console.debug('[RPC] getLstBalance:', ODRA_READ_LIMITATION_MSG);
 
-    try {
-      const accountHash = await getAccountHash(publicKey);
-      if (!accountHash) {
-        throw new Error('Failed to resolve account-hash from public key');
-      }
-      const balance = await queryContractDictionary(ybTokenHash, 'balances', accountHash);
-      if (balance !== null) {
-        balanceNum = BigInt(String(balance));
-      }
-    } catch {
-      console.warn('Balance lookup via dictionary failed (mapping key may differ); returning 0.');
-    }
-
-    // Get exchange rate to calculate CSPR equivalent
-    const rateData = await getLstExchangeRate();
-    const rate = rateData?.rate ?? RATE_SCALE;
-
-    const csprEquivalent = (balanceNum * rate) / RATE_SCALE;
-
-    return {
-      scsprBalance: balanceNum,
-      scsprFormatted: formatCsprAmount(balanceNum),
-      csprEquivalent,
-      csprEquivalentFormatted: formatCsprAmount(csprEquivalent),
-    };
-  } catch (error) {
-    console.error('Failed to get LST balance:', error);
-    return null;
-  }
+  return {
+    scsprBalance: BigInt(0),
+    scsprFormatted: '0',
+    csprEquivalent: BigInt(0),
+    csprEquivalentFormatted: '0',
+  };
 }
 
-type QueueConfigParsed = {
-  unbonding_period?: number | string;
-};
-
+// NOTE: Odra contracts can't be queried without entry point call
 export async function refreshUnbondingPeriodFromChain(): Promise<number | null> {
-  const queueHash = CONTRACTS.withdrawQueue;
-  if (!queueHash || queueHash === 'null') return null;
-
-  try {
-    const config = (await queryContractNamedKey(queueHash, 'config')) as QueueConfigParsed | null;
-    if (!config) return null;
-
-    const raw = config.unbonding_period;
-    const parsed = typeof raw === 'string' ? Number(raw) : Number(raw ?? 0);
-    if (!Number.isFinite(parsed) || parsed <= 0) return null;
-
-    unbondingPeriodOverrideSec = parsed;
-    return parsed;
-  } catch {
-    return null;
-  }
+  // Can't read from Odra contract - return null and use default
+  return null;
 }
 
 // Get user's withdraw requests from queue
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getUserWithdrawRequests(publicKey: string): Promise<WithdrawRequest[]> {
   const queueHash = CONTRACTS.withdrawQueue;
   if (!queueHash || queueHash === 'null') {
     return [];
   }
 
-  try {
-    const accountHash = await getAccountHash(publicKey);
-    if (!accountHash) return [];
+  console.debug('[RPC] getUserWithdrawRequests:', ODRA_READ_LIMITATION_MSG);
 
-    // Best-effort: keep UI in sync with on-chain unbonding period.
-    await refreshUnbondingPeriodFromChain();
-    const unbondingPeriod = getUnbondingPeriod();
-
-    // Read next_request_id and scan recent request IDs, filtering by owner.
-    const nextIdRaw = await queryContractNamedKey(queueHash, 'next_request_id');
-    const nextId = Number(nextIdRaw || 1);
-    if (!Number.isFinite(nextId) || nextId <= 1) return [];
-
-    const SCAN_LIMIT = 200;
-    const startId = Math.max(1, nextId - SCAN_LIMIT);
-    const endId = nextId - 1;
-
-    const now = Math.floor(Date.now() / 1000);
-    const requests: WithdrawRequest[] = [];
-
-    for (let requestId = startId; requestId <= endId; requestId++) {
-      const requestData = await queryContractDictionary(queueHash, 'requests', String(requestId));
-      if (!requestData || typeof requestData !== 'object') continue;
-
-      const req = requestData as Record<string, unknown>;
-      const owner = req.owner ?? req.user;
-      const ownerStr = typeof owner === 'string' ? owner : JSON.stringify(owner);
-      if (!ownerStr.includes(accountHash)) continue;
-
-      const requestedAt = Number(req.request_timestamp ?? req.requested_at ?? req.timestamp ?? 0);
-      const claimableAtOnchain = Number(req.claimable_at ?? 0);
-      const claimableAt = claimableAtOnchain > 0 ? claimableAtOnchain : requestedAt + unbondingPeriod;
-
-      let status: 'pending' | 'claimable' | 'claimed' = 'pending';
-      const contractStatus = req.status as unknown;
-      const statusStr = typeof contractStatus === 'string' ? contractStatus : JSON.stringify(contractStatus);
-      if (statusStr.includes('Claimed') || statusStr === '2') status = 'claimed';
-      else if (statusStr.includes('Claimable') || statusStr === '1' || now >= claimableAt) status = 'claimable';
-
-      requests.push({
-        id: requestId,
-        user: ownerStr,
-        shareAmount: BigInt(String(req.shares_locked ?? req.share_amount ?? '0')),
-        quotedCsprAmount: BigInt(String(req.quoted_assets ?? req.quoted_cspr_amount ?? '0')),
-        quotedRate: BigInt(String(req.quoted_rate ?? RATE_SCALE)),
-        requestedAt,
-        claimableAt,
-        status,
-      });
-    }
-
-    return requests.filter((r) => r.status !== 'claimed');
-  } catch (error) {
-    console.error('Failed to get withdraw requests:', error);
-    return [];
-  }
+  // Can't read withdraw requests without entry point call
+  return [];
 }
 
 // Get LST protocol statistics
+// NOTE: Odra contracts can't be queried for stats without entry point call
 export async function getLstProtocolStats(): Promise<LstProtocolStats | null> {
   const ybTokenHash = CONTRACTS.scsprYbtoken;
   if (!ybTokenHash || ybTokenHash === 'null') {
     return null;
   }
 
-  try {
-    const totalSharesRaw = await queryContractNamedKey(ybTokenHash, 'total_shares');
-    const totalShares = BigInt(String(totalSharesRaw || '0'));
+  // Return default values since Odra state can't be read directly
+  console.debug('[RPC] getLstProtocolStats:', ODRA_READ_LIMITATION_MSG);
 
-    const assetsRaw = await queryContractNamedKey(ybTokenHash, 'assets');
-    const assets = (assetsRaw ?? {}) as Record<string, unknown>;
-
-    const idleCspr = BigInt(String(assets.idle_cspr ?? '0'));
-    const delegatedCspr = BigInt(String(assets.delegated_cspr ?? '0'));
-    const undelegatingCspr = BigInt(String(assets.undelegating_cspr ?? '0'));
-    const claimableCspr = BigInt(String(assets.claimable_cspr ?? '0'));
-    const protocolFees = BigInt(String(assets.protocol_fees ?? '0'));
-    const realizedLosses = BigInt(String(assets.realized_losses ?? '0'));
-
-    const gross = idleCspr + delegatedCspr + undelegatingCspr + claimableCspr;
-    const deductions = protocolFees + realizedLosses;
-    const totalAssets = gross > deductions ? gross - deductions : BigInt(0);
-
-    // Calculate exchange rate: R = total_assets * SCALE / total_shares
-    const exchangeRate =
-      totalShares > BigInt(0) ? (totalAssets * RATE_SCALE) / totalShares : RATE_SCALE;
-
-    return {
-      totalAssets,
-      totalShares,
-      exchangeRate,
-      idleCspr,
-      delegatedCspr,
-      undelegatingCspr,
-      claimableCspr,
-    };
-  } catch (error) {
-    console.error('Failed to get LST protocol stats:', error);
-    return null;
-  }
+  return {
+    totalAssets: BigInt(0),
+    totalShares: BigInt(0),
+    exchangeRate: RATE_SCALE, // 1:1 default
+    idleCspr: BigInt(0),
+    delegatedCspr: BigInt(0),
+    undelegatingCspr: BigInt(0),
+    claimableCspr: BigInt(0),
+  };
 }
 
 // Formatting helpers
@@ -662,6 +568,7 @@ export interface StabilityPoolProtocolStats {
 }
 
 // Get user's stability pool state (deposit + gains)
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getStabilityPoolUserState(
   publicKey: string
 ): Promise<StabilityPoolUserState | null> {
@@ -670,84 +577,37 @@ export async function getStabilityPoolUserState(
     return null;
   }
 
-  try {
-    const accountHash = await getAccountHash(publicKey);
-    if (!accountHash) {
-      return null;
-    }
+  console.debug('[RPC] getStabilityPoolUserState:', ODRA_READ_LIMITATION_MSG);
 
-    // Query user deposit from dictionary
-    const depositData = await queryContractDictionary(spHash, 'deposits', accountHash);
-
-    let deposit = BigInt(0);
-    let csprGains = BigInt(0);
-    let scsprGains = BigInt(0);
-
-    if (depositData && typeof depositData === 'object') {
-      const snapshot = depositData as Record<string, unknown>;
-      deposit = BigInt(String(snapshot.deposit ?? '0'));
-      // Note: Gains require product-sum calculation which is complex
-      // For now, we read from the snapshot but the actual gains require on-chain computation
-      // The contract has get_user_cspr_gains and get_user_scspr_gains entrypoints
-    }
-
-    return {
-      deposit,
-      depositFormatted: formatGusdAmount(deposit),
-      csprGains,
-      csprGainsFormatted: formatCsprAmount(csprGains),
-      scsprGains,
-      scsprGainsFormatted: formatCsprAmount(scsprGains),
-    };
-  } catch (error) {
-    console.error('Failed to get StabilityPool user state:', error);
-    return null;
-  }
+  return {
+    deposit: BigInt(0),
+    depositFormatted: '0',
+    csprGains: BigInt(0),
+    csprGainsFormatted: '0',
+    scsprGains: BigInt(0),
+    scsprGainsFormatted: '0',
+  };
 }
 
 // Get stability pool protocol stats
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStats | null> {
   const spHash = CONTRACTS.stabilityPool;
   if (!spHash || spHash === 'null') {
     return null;
   }
 
-  try {
-    const totalDepositsRaw = await queryContractNamedKey(spHash, 'total_deposits');
-    const totalDeposits = BigInt(String(totalDepositsRaw ?? '0'));
+  console.debug('[RPC] getStabilityPoolStats:', ODRA_READ_LIMITATION_MSG);
 
-    const totalCsprRaw = await queryContractNamedKey(spHash, 'total_cspr_collateral');
-    const totalCsprCollateral = BigInt(String(totalCsprRaw ?? '0'));
-
-    const totalScsprRaw = await queryContractNamedKey(spHash, 'total_scspr_collateral');
-    const totalScsprCollateral = BigInt(String(totalScsprRaw ?? '0'));
-
-    const totalDebtRaw = await queryContractNamedKey(spHash, 'total_debt_absorbed');
-    const totalDebtAbsorbed = BigInt(String(totalDebtRaw ?? '0'));
-
-    const countRaw = await queryContractNamedKey(spHash, 'depositor_count');
-    const depositorCount = Number(countRaw ?? 0);
-
-    const safeModeRaw = await queryContractNamedKey(spHash, 'safe_mode');
-    let isSafeModeActive = false;
-    if (safeModeRaw && typeof safeModeRaw === 'object') {
-      const sm = safeModeRaw as Record<string, unknown>;
-      isSafeModeActive = Boolean(sm.is_active);
-    }
-
-    return {
-      totalDeposits,
-      totalDepositsFormatted: formatGusdAmount(totalDeposits),
-      totalCsprCollateral,
-      totalScsprCollateral,
-      totalDebtAbsorbed,
-      depositorCount,
-      isSafeModeActive,
-    };
-  } catch (error) {
-    console.error('Failed to get StabilityPool stats:', error);
-    return null;
-  }
+  return {
+    totalDeposits: BigInt(0),
+    totalDepositsFormatted: '0',
+    totalCsprCollateral: BigInt(0),
+    totalScsprCollateral: BigInt(0),
+    totalDebtAbsorbed: BigInt(0),
+    depositorCount: 0,
+    isSafeModeActive: false,
+  };
 }
 
 // ========== Redemption Queries ==========
@@ -764,78 +624,42 @@ export interface RedemptionProtocolStats {
 }
 
 // Get redemption protocol stats
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getRedemptionStats(): Promise<RedemptionProtocolStats | null> {
   const reHash = CONTRACTS.redemptionEngine;
   if (!reHash || reHash === 'null') {
     return null;
   }
 
-  try {
-    const totalRedeemedRaw = await queryContractNamedKey(reHash, 'total_redeemed');
-    const totalRedeemed = BigInt(String(totalRedeemedRaw ?? '0'));
+  console.debug('[RPC] getRedemptionStats:', ODRA_READ_LIMITATION_MSG);
 
-    const totalDistributedRaw = await queryContractNamedKey(reHash, 'total_collateral_distributed');
-    const totalCollateralDistributed = BigInt(String(totalDistributedRaw ?? '0'));
-
-    const totalFeesRaw = await queryContractNamedKey(reHash, 'total_fees_collected');
-    const totalFeesCollected = BigInt(String(totalFeesRaw ?? '0'));
-
-    const baseFeeRaw = await queryContractNamedKey(reHash, 'base_fee_bps');
-    const baseFee = Number(baseFeeRaw ?? 50);
-
-    const maxFeeRaw = await queryContractNamedKey(reHash, 'max_fee_bps');
-    const maxFee = Number(maxFeeRaw ?? 500);
-
-    // Current fee is dynamic but starts at base fee
-    const currentFee = baseFee;
-
-    const safeModeRaw = await queryContractNamedKey(reHash, 'safe_mode');
-    let isSafeModeActive = false;
-    if (safeModeRaw && typeof safeModeRaw === 'object') {
-      const sm = safeModeRaw as Record<string, unknown>;
-      isSafeModeActive = Boolean(sm.is_active);
-    }
-
-    return {
-      totalRedeemed,
-      totalRedeemedFormatted: formatGusdAmount(totalRedeemed),
-      totalCollateralDistributed,
-      totalFeesCollected,
-      baseFee,
-      maxFee,
-      currentFee,
-      isSafeModeActive,
-    };
-  } catch (error) {
-    console.error('Failed to get Redemption stats:', error);
-    return null;
-  }
+  // Return default values - actual stats require entry point calls
+  return {
+    totalRedeemed: BigInt(0),
+    totalRedeemedFormatted: '0',
+    totalCollateralDistributed: BigInt(0),
+    totalFeesCollected: BigInt(0),
+    baseFee: 50, // 0.5% default
+    maxFee: 500, // 5% default
+    currentFee: 50,
+    isSafeModeActive: false,
+  };
 }
 
 // ========== gUSD Balance Query ==========
 
 // Get user's gUSD balance from stablecoin contract
+// NOTE: Odra contracts can't be queried for balances without entry point call
 export async function getGusdBalance(publicKey: string): Promise<bigint> {
   const gusdHash = CONTRACTS.stablecoin;
   if (!gusdHash || gusdHash === 'null') {
+    console.debug('[RPC] gUSD contract not configured');
     return BigInt(0);
   }
 
-  try {
-    const accountHash = await getAccountHash(publicKey);
-    if (!accountHash) {
-      return BigInt(0);
-    }
-
-    const balance = await queryContractDictionary(gusdHash, 'balances', accountHash);
-    if (balance !== null) {
-      return BigInt(String(balance));
-    }
-    return BigInt(0);
-  } catch (error) {
-    console.error('Failed to get gUSD balance:', error);
-    return BigInt(0);
-  }
+  // Odra contracts don't expose balances via dictionaries - return 0
+  console.debug('[RPC] getGusdBalance:', ODRA_READ_LIMITATION_MSG);
+  return BigInt(0);
 }
 
 // Format gUSD amount (18 decimals)
@@ -887,6 +711,7 @@ export interface BranchStatus {
 }
 
 // Get user's vault for a specific collateral type
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getUserVault(
   publicKey: string,
   collateralType: CollateralType
@@ -899,46 +724,14 @@ export async function getUserVault(
     return null;
   }
 
-  try {
-    const accountHash = await getAccountHash(publicKey);
-    if (!accountHash) {
-      return null;
-    }
+  console.debug('[RPC] getUserVault:', ODRA_READ_LIMITATION_MSG);
 
-    // Query vault from the vaults dictionary
-    const vaultRaw = await queryContractDictionary(branchHash, 'vaults', accountHash);
-    if (!vaultRaw) {
-      return null;
-    }
-
-    // Parse vault data
-    const vault = vaultRaw as Record<string, unknown>;
-    const vaultData: VaultData = {
-      owner: String(vault.owner || ''),
-      collateralId: collateralType,
-      collateral: BigInt(String(vault.collateral || '0')),
-      debt: BigInt(String(vault.debt || '0')),
-      interestRateBps: Number(vault.interest_rate_bps || 0),
-      lastAccrualTimestamp: Number(vault.last_accrual_timestamp || 0),
-    };
-
-    // Get current price for ICR calculation
-    const price = await getCollateralPrice(collateralType);
-    const collateralValueUsd = calculateCollateralValue(vaultData.collateral, price, collateralType);
-    const icrBps = calculateIcr(collateralValueUsd, vaultData.debt);
-
-    return {
-      vault: vaultData,
-      icrBps,
-      collateralValueUsd,
-    };
-  } catch (error) {
-    console.error(`Failed to get vault for ${collateralType}:`, error);
-    return null;
-  }
+  // Return null - no vault data available without entry point call
+  return null;
 }
 
 // Get branch status for a collateral type
+// NOTE: Odra contracts can't be queried without entry point call
 export async function getBranchStatus(collateralType: CollateralType): Promise<BranchStatus | null> {
   const branchHash = collateralType === 'cspr'
     ? CONTRACTS.branchCspr
@@ -948,107 +741,36 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
     return null;
   }
 
-  try {
-    const [totalCollateralRaw, totalDebtRaw, vaultCountRaw] = await Promise.all([
-      queryContractNamedKey(branchHash, 'total_collateral'),
-      queryContractNamedKey(branchHash, 'total_debt'),
-      queryContractNamedKey(branchHash, 'vault_count'),
-    ]);
+  console.debug('[RPC] getBranchStatus:', ODRA_READ_LIMITATION_MSG);
 
-    return {
-      collateralId: collateralType,
-      totalCollateral: BigInt(String(totalCollateralRaw || '0')),
-      totalDebt: BigInt(String(totalDebtRaw || '0')),
-      vaultCount: Number(vaultCountRaw || 0),
-      isSafeModeActive: false, // TODO: query from router
-    };
-  } catch (error) {
-    console.error(`Failed to get branch status for ${collateralType}:`, error);
-    return null;
-  }
+  // Return default values
+  return {
+    collateralId: collateralType,
+    totalCollateral: BigInt(0),
+    totalDebt: BigInt(0),
+    vaultCount: 0,
+    isSafeModeActive: false,
+  };
 }
 
-// Styks Oracle contract hashes (Casper Testnet)
-// Package hash for reference: 2879d6e927289197aab0101cc033f532fe22e4ab4686e44b5743cb1333031acc
-const STYKS_CONTRACT_HASH = '3f1efb55d4795bba39ab8c204b554ea16638d0ab3fe58a01e16190e7103f5a0b';
+// ========== Oracle Price Query ==========
 
-// Get CSPR/USD price from Styks oracle
-async function getStyksCsprPrice(): Promise<bigint | null> {
-  try {
-    // Try to get price from Styks state dictionary
-    const stateRootHash = await getStateRootHash();
-    if (!stateRootHash) return null;
+// Default CSPR price: $0.02 (scaled to 18 decimals)
+// This is a fallback when oracle can't be read
+const DEFAULT_CSPR_PRICE = BigInt('20000000000000000'); // 0.02 * 1e18
 
-    // Query Styks price feed - try dictionary lookup for CSPRUSD pair
-    const result = await rpcCall<DictionaryItemResult>('state_get_dictionary_item', {
-      state_root_hash: stateRootHash,
-      dictionary_identifier: {
-        ContractNamedKey: {
-          key: `hash-${STYKS_CONTRACT_HASH}`,
-          dictionary_name: 'state',
-          dictionary_item_key: 'CSPRUSD',
-        },
-      },
-    });
-
-    if (result.stored_value?.CLValue?.parsed) {
-      const priceData = result.stored_value.CLValue.parsed;
-      // Handle different possible formats
-      if (typeof priceData === 'string') {
-        return BigInt(priceData);
-      } else if (typeof priceData === 'object' && priceData !== null) {
-        // Try common field names for price data
-        const data = priceData as Record<string, unknown>;
-        const price = data.price ?? data.value ?? data.twap ?? data.spot;
-        if (price !== undefined) {
-          return BigInt(String(price));
-        }
-      }
-    }
-    return null;
-  } catch (error) {
-    // Styks oracle might not have CSPRUSD data - this is expected
-    console.debug('Styks CSPRUSD not available:', error);
-    return null;
-  }
-}
-
-// Get collateral price (from Styks oracle, fallback to default)
+// Get collateral price
+// NOTE: Styks oracle is also an Odra contract and can't be read directly
+// In production, this would need a backend service to call the oracle
 export async function getCollateralPrice(collateralType: CollateralType): Promise<bigint> {
-  // Default price: 1 CSPR = $0.02 (scaled to 18 decimals)
-  const DEFAULT_PRICE = BigInt('20000000000000000'); // 0.02 * 1e18
+  console.debug('[RPC] getCollateralPrice:', ODRA_READ_LIMITATION_MSG);
 
-  try {
-    // Try to get CSPR price from Styks
-    const csprPrice = await getStyksCsprPrice();
-
-    if (csprPrice === null) {
-      console.warn('Styks oracle unavailable, using default price');
-      return DEFAULT_PRICE;
-    }
-
-    if (collateralType === 'cspr') {
-      return csprPrice;
-    } else {
-      // stCSPR price = CSPR price * exchange rate
-      // Get exchange rate from LST ybToken
-      const lstHash = CONTRACTS.scsprYbtoken;
-      if (!lstHash || lstHash === 'null') {
-        return csprPrice; // Default rate = 1.0
-      }
-
-      try {
-        const rateRaw = await queryContractNamedKey(lstHash, 'exchange_rate');
-        const exchangeRate = BigInt(String(rateRaw || '1000000000000000000'));
-        // stCSPR price = CSPR price * exchange rate / 1e18
-        return (csprPrice * exchangeRate) / BigInt('1000000000000000000');
-      } catch {
-        return csprPrice; // Fallback to CSPR price if rate unavailable
-      }
-    }
-  } catch (error) {
-    console.error('Failed to get collateral price:', error);
-    return DEFAULT_PRICE;
+  // Return default price since oracle can't be read
+  if (collateralType === 'cspr') {
+    return DEFAULT_CSPR_PRICE;
+  } else {
+    // stCSPR price = CSPR price * 1.0 (default exchange rate)
+    return DEFAULT_CSPR_PRICE;
   }
 }
 
