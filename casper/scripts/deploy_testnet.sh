@@ -345,11 +345,13 @@ extract_contract_hash() {
         return
     fi
 
-    # Last resort: any hash-like key
+    # Last resort: any hash-like key from effects
     contract_hash=$(echo "$result" | jq -r '
-        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
-        | select((.kind | type) == "object" and .kind.Write != null and (.key | startswith("hash-") or startswith("entity-contract-")))
-        | .key' 2>/dev/null | head -n 1)
+        [(.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | .key
+        | select(type == "string" and (startswith("hash-") or startswith("entity-contract-")))]
+        | unique
+        | .[0]' 2>/dev/null)
 
     echo "$contract_hash"
 }
@@ -607,7 +609,7 @@ main() {
         "registry:key='$REGISTRY_HASH'" \
         "router:key='$ROUTER_HASH'" \
         "stability_pool:key='$ROUTER_HASH'" \
-        "oracle:key='$ORACLE_HASH'")
+        "styks_oracle:key='$ORACLE_HASH'")
 
     # 13. StabilityPool
     STABILITY_POOL_HASH=$(deploy_contract "stabilityPool" "StabilityPool" "StabilityPool.wasm" "call" \
@@ -622,7 +624,7 @@ main() {
         "router:key='$ROUTER_HASH'" \
         "stablecoin:key='$STABLECOIN_HASH'" \
         "treasury:key='$TREASURY_HASH'" \
-        "oracle:key='$ORACLE_HASH'")
+        "styks_oracle:key='$ORACLE_HASH'")
 
     # =========================================================================
     # Phase 5: Cross-contract Configuration

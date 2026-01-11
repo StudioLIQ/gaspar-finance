@@ -33,7 +33,7 @@ pub struct SortedVaultEntry {
 
 /// Branch contract for stCSPR collateral
 #[odra::module]
-pub struct BranchSCSPR {
+pub struct BranchScspr {
     /// Registry contract address
     registry: Var<Address>,
     /// Router contract address
@@ -67,7 +67,7 @@ pub struct BranchSCSPR {
 }
 
 #[odra::module]
-impl BranchSCSPR {
+impl BranchScspr {
     /// Initialize the branch
     pub fn init(&mut self, registry: Address, router: Address, scspr_token: Address) {
         self.registry.set(registry);
