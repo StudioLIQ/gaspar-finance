@@ -6,7 +6,7 @@
 use odra::prelude::*;
 use odra::casper_types::U256;
 use crate::types::{CollateralId, SafeModeState, OracleStatus};
-use crate::interfaces::{OpenVaultParams, AdjustVaultParams, VaultInfo, BranchStatus};
+use crate::interfaces::{AdjustVaultParams, VaultInfo, BranchStatus};
 use crate::errors::CdpError;
 
 /// Router contract - main entry point for the CDP protocol
@@ -31,9 +31,22 @@ impl Router {
     }
 
     /// Open a new vault for the specified collateral type
-    pub fn open_vault(&mut self, collateral_id: CollateralId, params: OpenVaultParams) {
+    ///
+    /// # Arguments
+    /// * `collateral_id` - Collateral type (0 = CSPR, 1 = stCSPR)
+    /// * `collateral_amount` - Amount of collateral to deposit
+    /// * `debt_amount` - Amount of gUSD to mint
+    /// * `interest_rate_bps` - Interest rate in basis points
+    #[odra(payable)]
+    pub fn open_vault(
+        &mut self,
+        collateral_id: CollateralId,
+        collateral_amount: U256,
+        debt_amount: U256,
+        interest_rate_bps: u32,
+    ) {
         self.require_not_safe_mode_for_open();
-        self.validate_interest_rate(params.interest_rate_bps);
+        self.validate_interest_rate(interest_rate_bps);
 
         match collateral_id {
             CollateralId::Cspr => {}
@@ -42,7 +55,27 @@ impl Router {
     }
 
     /// Adjust an existing vault
-    pub fn adjust_vault(&mut self, collateral_id: CollateralId, params: AdjustVaultParams) {
+    ///
+    /// # Arguments
+    /// * `collateral_id` - Collateral type (0 = CSPR, 1 = stCSPR)
+    /// * `collateral_delta` - Amount of collateral to add/withdraw
+    /// * `collateral_is_withdraw` - true to withdraw, false to add
+    /// * `debt_delta` - Amount of debt to repay/borrow
+    /// * `debt_is_repay` - true to repay, false to borrow
+    pub fn adjust_vault(
+        &mut self,
+        collateral_id: CollateralId,
+        collateral_delta: U256,
+        collateral_is_withdraw: bool,
+        debt_delta: U256,
+        debt_is_repay: bool,
+    ) {
+        let params = AdjustVaultParams {
+            collateral_delta,
+            collateral_is_withdraw,
+            debt_delta,
+            debt_is_repay,
+        };
         self.require_safe_mode_adjustment_allowed(&params);
 
         match collateral_id {

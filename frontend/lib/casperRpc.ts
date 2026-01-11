@@ -96,12 +96,29 @@ function computeAccountHashFromPublicKey(publicKeyHex: string): string | null {
 }
 
 /**
- * Parse U256 from Odra-stored bytes (little-endian)
+ * Parse U256 from raw bytes (little-endian, fixed width)
  */
 function parseU256FromBytes(bytes: Uint8Array, offset: number = 0): bigint {
   let result = BigInt(0);
   for (let i = 0; i < 32 && offset + i < bytes.length; i++) {
     result += BigInt(bytes[offset + i]) << BigInt(i * 8);
+  }
+  return result;
+}
+
+/**
+ * Parse U256 from CLValue serialization (variable length with length prefix)
+ * CLValue U256 format: [length_byte] [data_bytes_little_endian]
+ */
+function parseU256FromCLValue(bytes: Uint8Array, offset: number = 0): bigint {
+  if (offset >= bytes.length) return BigInt(0);
+
+  const length = bytes[offset];
+  if (length === 0) return BigInt(0);
+
+  let result = BigInt(0);
+  for (let i = 0; i < length && offset + 1 + i < bytes.length; i++) {
+    result += BigInt(bytes[offset + 1 + i]) << BigInt(i * 8);
   }
   return result;
 }
@@ -791,7 +808,8 @@ async function fetchOdraVarU256(contractHash: string, fieldIndex: number): Promi
     const parsed = result.parsed;
     if (Array.isArray(parsed)) {
       const bytes = new Uint8Array(parsed);
-      return parseU256FromBytes(bytes, 0);
+      // Odra stores U256 as Vec<u8> containing CLValue-serialized U256
+      return parseU256FromCLValue(bytes, 0);
     } else if (parsed !== undefined && parsed !== null) {
       return BigInt(String(parsed));
     }
@@ -799,8 +817,8 @@ async function fetchOdraVarU256(contractHash: string, fieldIndex: number): Promi
     // Try parsing from bytes
     if (result.bytes) {
       const bytes = hexToBytes(result.bytes);
-      // Skip 4-byte Vec<u8> length prefix for Odra encoding
-      return parseU256FromBytes(bytes, 4);
+      // Skip 4-byte Vec<u8> length prefix, then parse CLValue U256
+      return parseU256FromCLValue(bytes, 4);
     }
 
     return BigInt(0);
@@ -939,20 +957,35 @@ interface AssetBreakdown {
 
 /**
  * Parse AssetBreakdown struct from Odra bytes
- * Odra serializes struct as Vec<u8> containing concatenated field values
+ * Odra serializes U256 fields in CLValue format: [length_byte] [data_little_endian]
+ * Fields are concatenated without padding
  */
 function parseAssetBreakdown(bytes: Uint8Array): AssetBreakdown {
-  // Each U256 field is 32 bytes, total 6 fields = 192 bytes
-  // Skip any prefix if present
-  const offset = bytes.length > 192 ? bytes.length - 192 : 0;
+  let offset = 0;
+
+  // Helper to read one CLValue U256 and advance offset
+  const readU256 = (): bigint => {
+    if (offset >= bytes.length) return BigInt(0);
+    const len = bytes[offset];
+    if (len === 0) {
+      offset += 1;
+      return BigInt(0);
+    }
+    let result = BigInt(0);
+    for (let i = 0; i < len && offset + 1 + i < bytes.length; i++) {
+      result += BigInt(bytes[offset + 1 + i]) << BigInt(i * 8);
+    }
+    offset += 1 + len;
+    return result;
+  };
 
   return {
-    idleCspr: parseU256FromBytes(bytes, offset + 0),
-    delegatedCspr: parseU256FromBytes(bytes, offset + 32),
-    undelegatingCspr: parseU256FromBytes(bytes, offset + 64),
-    claimableCspr: parseU256FromBytes(bytes, offset + 96),
-    protocolFees: parseU256FromBytes(bytes, offset + 128),
-    realizedLosses: parseU256FromBytes(bytes, offset + 160),
+    idleCspr: readU256(),
+    delegatedCspr: readU256(),
+    undelegatingCspr: readU256(),
+    claimableCspr: readU256(),
+    protocolFees: readU256(),
+    realizedLosses: readU256(),
   };
 }
 
@@ -1014,10 +1047,12 @@ async function fetchOdraTokenBalance(
       // Parse U256 from CLValue
       const parsed = result.parsed;
 
-      // Odra stores values as Vec<u8> (List U8), so parsed is an array of bytes
+      // Odra stores values as Vec<u8> (List U8) containing CLValue-serialized U256
+      // CLValue U256 format: [length_byte] [data_bytes_little_endian]
       if (Array.isArray(parsed)) {
         const bytes = new Uint8Array(parsed);
-        const value = parseU256FromBytes(bytes, 0);
+        // Use CLValue parser which handles length prefix
+        const value = parseU256FromCLValue(bytes, 0);
         console.log('[fetchOdraTokenBalance] Balance from array:', value.toString());
         return value;
       } else if (parsed !== undefined && parsed !== null) {
@@ -1031,8 +1066,8 @@ async function fetchOdraTokenBalance(
       const bytesHex = result.bytes;
       if (bytesHex) {
         const bytes = hexToBytes(bytesHex);
-        // Skip 4-byte Vec<u8> length prefix for Odra encoding
-        const value = parseU256FromBytes(bytes, 4);
+        // Skip 4-byte Vec<u8> length prefix, then parse CLValue U256
+        const value = parseU256FromCLValue(bytes, 4);
         console.log('[fetchOdraTokenBalance] Balance from bytes:', value.toString());
         return value;
       }
@@ -1366,18 +1401,45 @@ interface DepositSnapshot {
 
 /**
  * Parse DepositSnapshot from Odra bytes
+ * Odra serializes U256 in CLValue format: [length_byte] [data_little_endian]
+ * u64 is fixed 8 bytes little-endian
  */
 function parseDepositSnapshot(bytes: Uint8Array): DepositSnapshot {
-  // deposit(32) + p(32) + s_cspr(32) + s_scspr(32) + epoch(8) + scale(8) = 144 bytes
-  const offset = bytes.length > 144 ? bytes.length - 144 : 0;
+  let offset = 0;
+
+  // Helper to read one CLValue U256 and advance offset
+  const readU256 = (): bigint => {
+    if (offset >= bytes.length) return BigInt(0);
+    const len = bytes[offset];
+    if (len === 0) {
+      offset += 1;
+      return BigInt(0);
+    }
+    let result = BigInt(0);
+    for (let i = 0; i < len && offset + 1 + i < bytes.length; i++) {
+      result += BigInt(bytes[offset + 1 + i]) << BigInt(i * 8);
+    }
+    offset += 1 + len;
+    return result;
+  };
+
+  // Helper to read u64 (fixed 8 bytes)
+  const readU64 = (): bigint => {
+    let result = BigInt(0);
+    for (let i = 0; i < 8 && offset + i < bytes.length; i++) {
+      result += BigInt(bytes[offset + i]) << BigInt(i * 8);
+    }
+    offset += 8;
+    return result;
+  };
 
   return {
-    deposit: parseU256FromBytes(bytes, offset + 0),
-    p: parseU256FromBytes(bytes, offset + 32),
-    sCspr: parseU256FromBytes(bytes, offset + 64),
-    sScspr: parseU256FromBytes(bytes, offset + 96),
-    epoch: parseU64FromBytes(bytes, offset + 128),
-    scale: parseU64FromBytes(bytes, offset + 136),
+    deposit: readU256(),
+    p: readU256(),
+    sCspr: readU256(),
+    sScspr: readU256(),
+    epoch: readU64(),
+    scale: readU64(),
   };
 }
 
