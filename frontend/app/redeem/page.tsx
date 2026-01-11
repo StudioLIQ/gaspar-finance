@@ -74,8 +74,15 @@ function QuoteDisplay({ quote }: { quote: RedemptionQuote | null }) {
   );
 }
 
+// Format bigint to human-readable string (18 decimals)
+function formatBalance(value: bigint): string {
+  const num = Number(value) / 1e18;
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // Redemption Card Component
 function RedemptionCard({
+  userGusdBalance,
   userGusdBalanceFormatted,
   stats,
   txStatus,
@@ -84,6 +91,7 @@ function RedemptionCard({
   onRedeem,
   resetTxState,
 }: {
+  userGusdBalance: bigint | null;
   userGusdBalanceFormatted: string | null;
   stats: { baseFeeBps: number; isSafeModeActive: boolean } | null;
   txStatus: string;
@@ -96,6 +104,12 @@ function RedemptionCard({
   const [amount, setAmount] = useState('');
   const [collateralType, setCollateralType] = useState<CollateralType>('CSPR');
   const [quote, setQuote] = useState<RedemptionQuote | null>(null);
+
+  const handleMaxRedeem = () => {
+    if (userGusdBalance && userGusdBalance > BigInt(0)) {
+      setAmount(formatBalance(userGusdBalance));
+    }
+  };
 
   // Update quote when amount or collateral type changes
   useEffect(() => {
@@ -133,7 +147,21 @@ function RedemptionCard({
 
         {/* Amount Input */}
         <Input
-          label="gUSD Amount"
+          label={
+            <div className="flex items-center justify-between w-full">
+              <span>gUSD Amount</span>
+              {isConnected && userGusdBalance && userGusdBalance > BigInt(0) && (
+                <button
+                  type="button"
+                  onClick={handleMaxRedeem}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                  disabled={txStatus === 'signing' || txStatus === 'pending'}
+                >
+                  MAX
+                </button>
+              )}
+            </div>
+          }
           type="number"
           placeholder="0.00"
           value={amount}
@@ -303,6 +331,7 @@ export default function RedeemPage() {
         {/* Redemption Card */}
         <div className="max-w-xl mx-auto mb-8">
           <RedemptionCard
+            userGusdBalance={redemption.userGusdBalance}
             userGusdBalanceFormatted={redemption.userGusdBalanceFormatted}
             stats={redemption.stats}
             txStatus={redemption.txStatus}
