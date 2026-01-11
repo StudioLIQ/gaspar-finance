@@ -106,10 +106,63 @@ function parseU256FromBytes(bytes: Uint8Array, offset: number = 0): bigint {
   return result;
 }
 
+/**
+ * Parse u64 from bytes (little-endian)
+ */
+function parseU64FromBytes(bytes: Uint8Array, offset: number = 0): bigint {
+  let result = BigInt(0);
+  for (let i = 0; i < 8 && offset + i < bytes.length; i++) {
+    result += BigInt(bytes[offset + i]) << BigInt(i * 8);
+  }
+  return result;
+}
+
+/**
+ * Compute Odra dictionary key for Var<T> (simple field access)
+ * Key = blake2b(field_index_u32_be)
+ */
+function computeOdraVarKey(fieldIndex: number): string {
+  // Index as 4 bytes big endian
+  const indexBytes = new Uint8Array(4);
+  indexBytes[0] = (fieldIndex >> 24) & 0xff;
+  indexBytes[1] = (fieldIndex >> 16) & 0xff;
+  indexBytes[2] = (fieldIndex >> 8) & 0xff;
+  indexBytes[3] = fieldIndex & 0xff;
+
+  // Blake2b hash (32 bytes)
+  const hashedKey = blake2b(indexBytes, undefined, 32);
+  return bytesToHex(hashedKey);
+}
+
 // Field indices for Odra contracts (1-indexed!)
 const ODRA_FIELD_INDEX = {
-  // ScsprYbToken: name(1), symbol(2), decimals(3), total_shares(4), balances(5), ...
+  // ScsprYbToken: name(1), symbol(2), decimals(3), total_shares(4), balances(5), allowances(6), assets(7), ...
+  SCSPR_TOTAL_SHARES: 4,
   SCSPR_BALANCES: 5,
+  SCSPR_ASSETS: 7,  // AssetBreakdown struct
+  SCSPR_LAST_SYNC: 8,
+
+  // WithdrawQueue: ybtoken(1), admin(2), next_request_id(3), requests(4), user_requests(5), user_request_count(6), config(7), stats(8)
+  QUEUE_CONFIG: 7,
+  QUEUE_STATS: 8,
+
+  // StabilityPool: registry(1), router(2), stablecoin(3), liquidation_engine(4), scspr_token(5),
+  // total_deposits(6), total_cspr_collateral(7), total_scspr_collateral(8), total_debt_absorbed(9),
+  // depositor_count(10), ps_state(11), ..., safe_mode(15)
+  SP_TOTAL_DEPOSITS: 6,
+  SP_TOTAL_CSPR_COLLATERAL: 7,
+  SP_TOTAL_SCSPR_COLLATERAL: 8,
+  SP_TOTAL_DEBT_ABSORBED: 9,
+  SP_DEPOSITOR_COUNT: 10,
+  SP_SAFE_MODE: 15,
+
+  // BranchCspr: registry(1), router(2), vaults(3), sorted_vaults(4), sorted_head(5), sorted_tail(6),
+  // total_collateral(7), total_debt(8), vault_count(9), safe_mode(10), last_good_price(11), ...
+  BRANCH_TOTAL_COLLATERAL: 7,
+  BRANCH_TOTAL_DEBT: 8,
+  BRANCH_VAULT_COUNT: 9,
+  BRANCH_SAFE_MODE: 10,
+
   // CsprUsd: name(1), symbol(2), decimals(3), total_supply(4), balances(5), ...
   GUSD_BALANCES: 5,
 } as const;
@@ -276,12 +329,23 @@ export function getUnbondingPeriodDisplay(): string {
 // RPC Client
 let requestId = 1;
 
-async function rpcCall<T>(method: string, params: unknown[] | Record<string, unknown>): Promise<T> {
+// Get RPC endpoint - use local proxy in browser to avoid CORS
+function getRpcEndpoint(): string {
+  if (typeof window !== 'undefined') {
+    // Browser: use local proxy
+    return '/api/rpc';
+  }
+  // Server-side: direct connection
   const network = getNetworkConfig();
+  return network.rpcUrl;
+}
+
+async function rpcCall<T>(method: string, params: unknown[] | Record<string, unknown>): Promise<T> {
+  const rpcUrl = getRpcEndpoint();
   const reqId = requestId++;
 
   try {
-    const response = await fetch(network.rpcUrl, {
+    const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -489,32 +553,36 @@ async function fetchBalanceFromCsprLive(publicKeyHex: string): Promise<bigint | 
 
 // Query CSPR balance using Casper 2.0 query_balance with cspr.live fallback
 export async function getAccountCsprBalance(publicKeyHex: string): Promise<bigint> {
-  console.log('[RPC] getAccountCsprBalance called with:', publicKeyHex);
+  console.log('[CSPR Balance] Starting balance fetch for:', publicKeyHex);
+  console.log('[CSPR Balance] Public key length:', publicKeyHex?.length);
 
   // Validate public key format
   if (!publicKeyHex || publicKeyHex.length < 64) {
-    console.warn('[RPC] Invalid public key format:', publicKeyHex);
+    console.error('[CSPR Balance] INVALID public key format!');
     return BigInt(0);
   }
 
   // Try RPC first
   try {
+    console.log('[CSPR Balance] Attempting RPC query_balance...');
     const result = await rpcCall<QueryBalanceResult>('query_balance', {
       purse_identifier: { main_purse_under_public_key: publicKeyHex },
     });
-    console.log('[RPC] CSPR balance result:', result.balance);
+    console.log('[CSPR Balance] SUCCESS via RPC:', result.balance);
     return BigInt(result.balance);
   } catch (rpcError) {
-    console.warn('[RPC] query_balance failed, trying cspr.live fallback:', rpcError);
+    console.warn('[CSPR Balance] RPC failed:', rpcError instanceof Error ? rpcError.message : rpcError);
   }
 
   // Fallback to cspr.live API
+  console.log('[CSPR Balance] Attempting cspr.live fallback...');
   const fallbackBalance = await fetchBalanceFromCsprLive(publicKeyHex);
   if (fallbackBalance !== null) {
+    console.log('[CSPR Balance] SUCCESS via cspr.live:', fallbackBalance.toString());
     return fallbackBalance;
   }
 
-  console.error('[RPC] All balance fetch methods failed');
+  console.error('[CSPR Balance] ALL METHODS FAILED - returning 0');
   return BigInt(0);
 }
 
@@ -628,6 +696,137 @@ async function queryOdraDictionaryItem(
 }
 
 /**
+ * Query Odra Var<T> field from contract state
+ */
+async function queryOdraVarField(
+  contractHash: string,
+  fieldIndex: number
+): Promise<{ bytes?: string; parsed?: unknown } | null> {
+  const dictionaryKey = computeOdraVarKey(fieldIndex);
+  return queryOdraDictionaryItem(contractHash, dictionaryKey);
+}
+
+/**
+ * Fetch U256 value from Odra Var field
+ */
+async function fetchOdraVarU256(contractHash: string, fieldIndex: number): Promise<bigint> {
+  try {
+    const result = await queryOdraVarField(contractHash, fieldIndex);
+    if (!result) return BigInt(0);
+
+    // Parse from CLValue
+    const parsed = result.parsed;
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      return parseU256FromBytes(bytes, 0);
+    } else if (parsed !== undefined && parsed !== null) {
+      return BigInt(String(parsed));
+    }
+
+    // Try parsing from bytes
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip 4-byte Vec<u8> length prefix for Odra encoding
+      return parseU256FromBytes(bytes, 4);
+    }
+
+    return BigInt(0);
+  } catch (err) {
+    console.warn('[fetchOdraVarU256] Error:', err);
+    return BigInt(0);
+  }
+}
+
+/**
+ * Fetch u64 value from Odra Var field
+ */
+async function fetchOdraVarU64(contractHash: string, fieldIndex: number): Promise<bigint> {
+  try {
+    const result = await queryOdraVarField(contractHash, fieldIndex);
+    if (!result) return BigInt(0);
+
+    const parsed = result.parsed;
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      return parseU64FromBytes(bytes, 0);
+    } else if (typeof parsed === 'number') {
+      return BigInt(parsed);
+    } else if (parsed !== undefined && parsed !== null) {
+      return BigInt(String(parsed));
+    }
+
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      return parseU64FromBytes(bytes, 4);
+    }
+
+    return BigInt(0);
+  } catch (err) {
+    console.warn('[fetchOdraVarU64] Error:', err);
+    return BigInt(0);
+  }
+}
+
+/**
+ * AssetBreakdown struct from ScsprYbToken
+ * Fields: idle_cspr, delegated_cspr, undelegating_cspr, claimable_cspr, protocol_fees, realized_losses
+ */
+interface AssetBreakdown {
+  idleCspr: bigint;
+  delegatedCspr: bigint;
+  undelegatingCspr: bigint;
+  claimableCspr: bigint;
+  protocolFees: bigint;
+  realizedLosses: bigint;
+}
+
+/**
+ * Parse AssetBreakdown struct from Odra bytes
+ * Odra serializes struct as Vec<u8> containing concatenated field values
+ */
+function parseAssetBreakdown(bytes: Uint8Array): AssetBreakdown {
+  // Each U256 field is 32 bytes, total 6 fields = 192 bytes
+  // Skip any prefix if present
+  const offset = bytes.length > 192 ? bytes.length - 192 : 0;
+
+  return {
+    idleCspr: parseU256FromBytes(bytes, offset + 0),
+    delegatedCspr: parseU256FromBytes(bytes, offset + 32),
+    undelegatingCspr: parseU256FromBytes(bytes, offset + 64),
+    claimableCspr: parseU256FromBytes(bytes, offset + 96),
+    protocolFees: parseU256FromBytes(bytes, offset + 128),
+    realizedLosses: parseU256FromBytes(bytes, offset + 160),
+  };
+}
+
+/**
+ * Fetch AssetBreakdown from ScsprYbToken contract
+ */
+async function fetchAssetBreakdown(contractHash: string): Promise<AssetBreakdown | null> {
+  try {
+    const result = await queryOdraVarField(contractHash, ODRA_FIELD_INDEX.SCSPR_ASSETS);
+    if (!result) return null;
+
+    const parsed = result.parsed;
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      return parseAssetBreakdown(bytes);
+    }
+
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip 4-byte length prefix
+      return parseAssetBreakdown(bytes.slice(4));
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('[fetchAssetBreakdown] Error:', err);
+    return null;
+  }
+}
+
+/**
  * Fetch token balance from Odra CEP-18 contract
  */
 async function fetchOdraTokenBalance(
@@ -701,14 +900,60 @@ export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
     return null;
   }
 
-  // Since we can't read Odra state, return default 1:1 exchange rate
-  // In production, this would need a backend service or contract modification
-  console.debug('[RPC] getLstExchangeRate:', ODRA_READ_LIMITATION_MSG);
-  return {
-    rate: RATE_SCALE, // 1:1 default
-    rateFormatted: formatRate(RATE_SCALE),
-    timestamp: Date.now(),
-  };
+  try {
+    // Fetch total_shares and assets breakdown to calculate rate
+    const [totalShares, assetBreakdown] = await Promise.all([
+      fetchOdraVarU256(ybTokenHash, ODRA_FIELD_INDEX.SCSPR_TOTAL_SHARES),
+      fetchAssetBreakdown(ybTokenHash),
+    ]);
+
+    console.log('[RPC] getLstExchangeRate: totalShares=', totalShares.toString());
+    console.log('[RPC] getLstExchangeRate: assetBreakdown=', assetBreakdown);
+
+    if (totalShares === BigInt(0)) {
+      // No shares yet, return 1:1 rate
+      return {
+        rate: RATE_SCALE,
+        rateFormatted: formatRate(RATE_SCALE),
+        timestamp: Date.now(),
+      };
+    }
+
+    // Calculate total assets from breakdown
+    let totalAssets = BigInt(0);
+    if (assetBreakdown) {
+      const gross = assetBreakdown.idleCspr + assetBreakdown.delegatedCspr +
+                    assetBreakdown.undelegatingCspr + assetBreakdown.claimableCspr;
+      const deductions = assetBreakdown.protocolFees + assetBreakdown.realizedLosses;
+      totalAssets = gross > deductions ? gross - deductions : BigInt(0);
+    }
+
+    if (totalAssets === BigInt(0)) {
+      return {
+        rate: RATE_SCALE,
+        rateFormatted: formatRate(RATE_SCALE),
+        timestamp: Date.now(),
+      };
+    }
+
+    // Rate = total_assets * SCALE / total_shares (CSPR per stCSPR)
+    const rate = (totalAssets * RATE_SCALE) / totalShares;
+
+    console.log('[RPC] getLstExchangeRate: rate=', rate.toString());
+
+    return {
+      rate,
+      rateFormatted: formatRate(rate),
+      timestamp: Date.now(),
+    };
+  } catch (err) {
+    console.warn('[RPC] getLstExchangeRate failed, using default:', err);
+    return {
+      rate: RATE_SCALE,
+      rateFormatted: formatRate(RATE_SCALE),
+      timestamp: Date.now(),
+    };
+  }
 }
 
 // Get user's stCSPR balance from CEP-18 dictionary using Odra key computation
@@ -745,10 +990,49 @@ export async function getLstBalance(publicKey: string): Promise<LstBalance | nul
   }
 }
 
-// NOTE: Odra contracts can't be queried without entry point call
+// Refresh unbonding period from WithdrawQueue contract
 export async function refreshUnbondingPeriodFromChain(): Promise<number | null> {
-  // Can't read from Odra contract - return null and use default
-  return null;
+  const queueHash = CONTRACTS.withdrawQueue;
+  if (!queueHash || queueHash === 'null') {
+    return null;
+  }
+
+  try {
+    // QueueConfig struct: unbonding_period(u64), min_withdrawal(U256), requests_paused(bool), claims_paused(bool)
+    // First field is unbonding_period
+    const result = await queryOdraVarField(queueHash, ODRA_FIELD_INDEX.QUEUE_CONFIG);
+    if (!result) return null;
+
+    const parsed = result.parsed;
+    if (Array.isArray(parsed) && parsed.length >= 8) {
+      // First 8 bytes are unbonding_period (u64)
+      const bytes = new Uint8Array(parsed);
+      const period = parseU64FromBytes(bytes, 0);
+      const periodNum = Number(period);
+      if (periodNum > 0) {
+        unbondingPeriodOverrideSec = periodNum;
+        console.log('[RPC] refreshUnbondingPeriodFromChain:', periodNum);
+        return periodNum;
+      }
+    }
+
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip length prefix, then read u64
+      const period = parseU64FromBytes(bytes, 4);
+      const periodNum = Number(period);
+      if (periodNum > 0) {
+        unbondingPeriodOverrideSec = periodNum;
+        console.log('[RPC] refreshUnbondingPeriodFromChain:', periodNum);
+        return periodNum;
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('[RPC] refreshUnbondingPeriodFromChain failed:', err);
+    return null;
+  }
 }
 
 // Get user's withdraw requests from queue
@@ -766,25 +1050,61 @@ export async function getUserWithdrawRequests(publicKey: string): Promise<Withdr
 }
 
 // Get LST protocol statistics
-// NOTE: Odra contracts can't be queried for stats without entry point call
 export async function getLstProtocolStats(): Promise<LstProtocolStats | null> {
   const ybTokenHash = CONTRACTS.scsprYbtoken;
   if (!ybTokenHash || ybTokenHash === 'null') {
     return null;
   }
 
-  // Return default values since Odra state can't be read directly
-  console.debug('[RPC] getLstProtocolStats:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Fetch total_shares and assets breakdown
+    const [totalShares, assetBreakdown] = await Promise.all([
+      fetchOdraVarU256(ybTokenHash, ODRA_FIELD_INDEX.SCSPR_TOTAL_SHARES),
+      fetchAssetBreakdown(ybTokenHash),
+    ]);
 
-  return {
-    totalAssets: BigInt(0),
-    totalShares: BigInt(0),
-    exchangeRate: RATE_SCALE, // 1:1 default
-    idleCspr: BigInt(0),
-    delegatedCspr: BigInt(0),
-    undelegatingCspr: BigInt(0),
-    claimableCspr: BigInt(0),
-  };
+    console.log('[RPC] getLstProtocolStats: totalShares=', totalShares.toString());
+    console.log('[RPC] getLstProtocolStats: assetBreakdown=', assetBreakdown);
+
+    const idleCspr = assetBreakdown?.idleCspr ?? BigInt(0);
+    const delegatedCspr = assetBreakdown?.delegatedCspr ?? BigInt(0);
+    const undelegatingCspr = assetBreakdown?.undelegatingCspr ?? BigInt(0);
+    const claimableCspr = assetBreakdown?.claimableCspr ?? BigInt(0);
+    const protocolFees = assetBreakdown?.protocolFees ?? BigInt(0);
+    const realizedLosses = assetBreakdown?.realizedLosses ?? BigInt(0);
+
+    // Calculate total assets
+    const gross = idleCspr + delegatedCspr + undelegatingCspr + claimableCspr;
+    const deductions = protocolFees + realizedLosses;
+    const totalAssets = gross > deductions ? gross - deductions : BigInt(0);
+
+    // Calculate exchange rate
+    let exchangeRate = RATE_SCALE;
+    if (totalShares > BigInt(0) && totalAssets > BigInt(0)) {
+      exchangeRate = (totalAssets * RATE_SCALE) / totalShares;
+    }
+
+    return {
+      totalAssets,
+      totalShares,
+      exchangeRate,
+      idleCspr,
+      delegatedCspr,
+      undelegatingCspr,
+      claimableCspr,
+    };
+  } catch (err) {
+    console.warn('[RPC] getLstProtocolStats failed:', err);
+    return {
+      totalAssets: BigInt(0),
+      totalShares: BigInt(0),
+      exchangeRate: RATE_SCALE,
+      idleCspr: BigInt(0),
+      delegatedCspr: BigInt(0),
+      undelegatingCspr: BigInt(0),
+      claimableCspr: BigInt(0),
+    };
+  }
 }
 
 // Formatting helpers
@@ -897,24 +1217,57 @@ export async function getStabilityPoolUserState(
 }
 
 // Get stability pool protocol stats
-// NOTE: Odra contracts can't be queried without entry point call
 export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStats | null> {
   const spHash = CONTRACTS.stabilityPool;
   if (!spHash || spHash === 'null') {
     return null;
   }
 
-  console.debug('[RPC] getStabilityPoolStats:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Fetch all stats in parallel
+    const [
+      totalDeposits,
+      totalCsprCollateral,
+      totalScsprCollateral,
+      totalDebtAbsorbed,
+      depositorCount,
+    ] = await Promise.all([
+      fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_DEPOSITS),
+      fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_CSPR_COLLATERAL),
+      fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_SCSPR_COLLATERAL),
+      fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_DEBT_ABSORBED),
+      fetchOdraVarU64(spHash, ODRA_FIELD_INDEX.SP_DEPOSITOR_COUNT),
+    ]);
 
-  return {
-    totalDeposits: BigInt(0),
-    totalDepositsFormatted: '0',
-    totalCsprCollateral: BigInt(0),
-    totalScsprCollateral: BigInt(0),
-    totalDebtAbsorbed: BigInt(0),
-    depositorCount: 0,
-    isSafeModeActive: false,
-  };
+    console.log('[RPC] getStabilityPoolStats:', {
+      totalDeposits: totalDeposits.toString(),
+      totalCsprCollateral: totalCsprCollateral.toString(),
+      totalScsprCollateral: totalScsprCollateral.toString(),
+      totalDebtAbsorbed: totalDebtAbsorbed.toString(),
+      depositorCount: depositorCount.toString(),
+    });
+
+    return {
+      totalDeposits,
+      totalDepositsFormatted: formatGusdAmount(totalDeposits),
+      totalCsprCollateral,
+      totalScsprCollateral,
+      totalDebtAbsorbed,
+      depositorCount: Number(depositorCount),
+      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+    };
+  } catch (err) {
+    console.warn('[RPC] getStabilityPoolStats failed:', err);
+    return {
+      totalDeposits: BigInt(0),
+      totalDepositsFormatted: '0',
+      totalCsprCollateral: BigInt(0),
+      totalScsprCollateral: BigInt(0),
+      totalDebtAbsorbed: BigInt(0),
+      depositorCount: 0,
+      isSafeModeActive: false,
+    };
+  }
 }
 
 // ========== Redemption Queries ==========
@@ -1047,7 +1400,6 @@ export async function getUserVault(
 }
 
 // Get branch status for a collateral type
-// NOTE: Odra contracts can't be queried without entry point call
 export async function getBranchStatus(collateralType: CollateralType): Promise<BranchStatus | null> {
   const branchHash = collateralType === 'cspr'
     ? CONTRACTS.branchCspr
@@ -1057,16 +1409,37 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
     return null;
   }
 
-  console.debug('[RPC] getBranchStatus:', ODRA_READ_LIMITATION_MSG);
+  try {
+    // Fetch branch stats in parallel
+    const [totalCollateral, totalDebt, vaultCount] = await Promise.all([
+      fetchOdraVarU256(branchHash, ODRA_FIELD_INDEX.BRANCH_TOTAL_COLLATERAL),
+      fetchOdraVarU256(branchHash, ODRA_FIELD_INDEX.BRANCH_TOTAL_DEBT),
+      fetchOdraVarU64(branchHash, ODRA_FIELD_INDEX.BRANCH_VAULT_COUNT),
+    ]);
 
-  // Return default values
-  return {
-    collateralId: collateralType,
-    totalCollateral: BigInt(0),
-    totalDebt: BigInt(0),
-    vaultCount: 0,
-    isSafeModeActive: false,
-  };
+    console.log(`[RPC] getBranchStatus(${collateralType}):`, {
+      totalCollateral: totalCollateral.toString(),
+      totalDebt: totalDebt.toString(),
+      vaultCount: vaultCount.toString(),
+    });
+
+    return {
+      collateralId: collateralType,
+      totalCollateral,
+      totalDebt,
+      vaultCount: Number(vaultCount),
+      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+    };
+  } catch (err) {
+    console.warn(`[RPC] getBranchStatus(${collateralType}) failed:`, err);
+    return {
+      collateralId: collateralType,
+      totalCollateral: BigInt(0),
+      totalDebt: BigInt(0),
+      vaultCount: 0,
+      isSafeModeActive: false,
+    };
+  }
 }
 
 // ========== Oracle Price Query ==========
