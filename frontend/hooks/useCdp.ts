@@ -286,6 +286,7 @@ export function useCdp(): CdpState & CdpActions {
 
       try {
         const routerHash = CONTRACTS.router;
+        const routerPackageHash = CONTRACTS.routerPackage;
         if (!routerHash || routerHash === 'null') {
           setTxError('Router contract not deployed');
           setTxStatus('error');
@@ -297,6 +298,13 @@ export function useCdp(): CdpState & CdpActions {
 
         if (collateralType === 'cspr') {
           // For CSPR, need to use proxy_caller.wasm to attach value
+          // Proxy caller requires package hash, not contract hash
+          if (!routerPackageHash || routerPackageHash === 'null') {
+            setTxError('Router package hash not configured');
+            setTxStatus('error');
+            return false;
+          }
+
           let wasmBase64: string;
           try {
             wasmBase64 = await loadProxyCallerWasm();
@@ -310,7 +318,7 @@ export function useCdp(): CdpState & CdpActions {
           const deployJson = buildProxyCallerDeploy(
             publicKey,
             {
-              contractPackageHash: routerHash,
+              contractPackageHash: routerPackageHash,
               entryPoint: 'open_vault',
               args: [
                 { name: 'collateral_id', clType: 'U8', value: '0' }, // CSPR = 0

@@ -26,6 +26,7 @@ export const CASPER_MAINNET = {
 type RuntimeContracts = {
   registry?: string;
   router?: string;
+  routerPackage?: string;
   stablecoin?: string;
   oracleAdapter?: string;
   stabilityPool?: string;
@@ -84,6 +85,7 @@ export const SUPPORTED_WALLET = 'Casper Wallet' as const;
 type Contracts = {
   registry: string | null;
   router: string | null;
+  routerPackage: string | null;
   stablecoin: string | null;
   oracleAdapter: string | null;
   stabilityPool: string | null;
@@ -106,6 +108,9 @@ const buildContracts = (): Contracts => {
     router:
       normalizeHash(runtimeContracts.router) ??
       normalizeHash(process.env.NEXT_PUBLIC_ROUTER_HASH),
+    routerPackage:
+      normalizeHash(runtimeContracts.routerPackage) ??
+      normalizeHash(process.env.NEXT_PUBLIC_ROUTER_PACKAGE_HASH),
     stablecoin:
       normalizeHash(runtimeContracts.stablecoin) ??
       normalizeHash(process.env.NEXT_PUBLIC_STABLECOIN_HASH),

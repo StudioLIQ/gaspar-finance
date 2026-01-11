@@ -5,6 +5,7 @@
   "contracts": {
     "registry": "hash-a5a730f6f09d8d97190cddf1bd685d7bbed927add85d411e6938b7dcb5cf7316",
     "router": "hash-fd0cd0e5b3aa5b03683d75c73cae4f43e4c704fb75504aa431f5fe12118fdc62",
+    "routerPackage": "contract-package-e4b9bc7f5fba374aa97859567d94d157f5b146e44eb05cdcdfbb9304f3f0e015",
     "stablecoin": "hash-e5c5b616e066c41c34d0002ef2bd208ac423f9735f3202296bae16a03573614f",
     "oracleAdapter": "hash-aff2ebdaf2d9f1aa55c7f183f065830004ab1d15477118d5fc863d2308760768",
     "stabilityPool": "hash-b5ef8f007c8002f9d5b1d1a022d257067878b66d07df8361ac6bd8ea0c7a6f30",
