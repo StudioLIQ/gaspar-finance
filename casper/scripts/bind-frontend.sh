@@ -51,6 +51,7 @@ fi
 # Extract contract hashes
 REGISTRY_HASH=$(jq -r '.contracts.registry.hash // "null"' "$DEPLOY_FILE")
 ROUTER_HASH=$(jq -r '.contracts.router.hash // "null"' "$DEPLOY_FILE")
+ROUTER_PKG_HASH=$(jq -r '.contracts.router.package_hash // "null"' "$DEPLOY_FILE")
 STABLECOIN_HASH=$(jq -r '.contracts.stablecoin.hash // "null"' "$DEPLOY_FILE")
 ORACLE_HASH=$(jq -r '.contracts.oracleAdapter.hash // "null"' "$DEPLOY_FILE")
 STABILITY_POOL_HASH=$(jq -r '.contracts.stabilityPool.hash // "null"' "$DEPLOY_FILE")
@@ -75,6 +76,7 @@ cat > "$CONFIG_DIR/casper-${NETWORK}.json" << EOF
   "contracts": {
     "registry": "$REGISTRY_HASH",
     "router": "$ROUTER_HASH",
+    "routerPackage": "$ROUTER_PKG_HASH",
     "stablecoin": "$STABLECOIN_HASH",
     "oracleAdapter": "$ORACLE_HASH",
     "stabilityPool": "$STABILITY_POOL_HASH",
@@ -114,6 +116,7 @@ NEXT_PUBLIC_CASPER_CHAIN_NAME=$CHAIN_NAME
 # Contract Addresses
 NEXT_PUBLIC_REGISTRY_HASH=$REGISTRY_HASH
 NEXT_PUBLIC_ROUTER_HASH=$ROUTER_HASH
+NEXT_PUBLIC_ROUTER_PACKAGE_HASH=$ROUTER_PKG_HASH
 NEXT_PUBLIC_STABLECOIN_HASH=$STABLECOIN_HASH
 NEXT_PUBLIC_ORACLE_ADAPTER_HASH=$ORACLE_HASH
 NEXT_PUBLIC_STABILITY_POOL_HASH=$STABILITY_POOL_HASH
