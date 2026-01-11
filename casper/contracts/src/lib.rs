@@ -33,6 +33,7 @@ pub mod types;
 pub mod errors;
 pub mod interfaces;
 pub mod interest;
+pub mod styks_oracle;
 
 // Contract modules
 pub mod registry;

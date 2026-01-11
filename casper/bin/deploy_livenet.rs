@@ -221,7 +221,7 @@ fn main() {
             registry: registry_addr,
             router: router_addr,
             stability_pool: router_addr, // placeholder, will be updated later
-            oracle: oracle_addr,
+            styks_oracle: oracle_addr, // Styks oracle address
         },
     );
     let liquidation_engine_addr = liquidation_engine.address().clone();
@@ -250,7 +250,7 @@ fn main() {
             router: router_addr,
             stablecoin: stablecoin_addr,
             treasury: treasury_addr,
-            oracle: oracle_addr,
+            styks_oracle: oracle_addr, // Styks oracle address
         },
     );
     println!("RedemptionEngine deployed at: {:?}", redemption_engine.address().clone());

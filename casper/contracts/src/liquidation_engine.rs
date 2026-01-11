@@ -16,13 +16,7 @@ use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
 use odra::CallDef;
 use crate::types::{CollateralId, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
-
-/// Oracle adapter interface
-#[odra::external_contract]
-pub trait OracleAdapter {
-    fn get_price(&self, collateral_id: u8) -> U256;
-    fn get_price_status(&self, collateral_id: u8) -> u8;
-}
+use crate::styks_oracle::StyksOracle;
 
 /// Branch interface for vault operations
 #[odra::external_contract]
@@ -104,8 +98,10 @@ pub struct LiquidationEngine {
     router: Var<Address>,
     /// Stability Pool contract address
     stability_pool: Var<Address>,
-    /// Oracle adapter contract address
-    oracle: Var<Address>,
+    /// Styks oracle contract address (direct price feed)
+    styks_oracle: Var<Address>,
+    /// stCSPR ybToken address (for exchange rate)
+    scspr_ybtoken: Var<Address>,
     /// CSPR Branch contract address
     branch_cspr: Var<Address>,
     /// stCSPR Branch contract address
@@ -136,12 +132,12 @@ impl LiquidationEngine {
         registry: Address,
         router: Address,
         stability_pool: Address,
-        oracle: Address,
+        styks_oracle: Address,
     ) {
         self.registry.set(registry);
         self.router.set(router);
         self.stability_pool.set(stability_pool);
-        self.oracle.set(oracle);
+        self.styks_oracle.set(styks_oracle);
         self.liquidation_penalty_bps.set(LIQUIDATION_PENALTY_BPS);
         self.gas_compensation.set(U256::from(200) * U256::from(SCALE)); // 200 gUSD equivalent
         self.total_liquidations.set(0);
@@ -180,9 +176,14 @@ impl LiquidationEngine {
         self.scspr_token.set(scspr_token);
     }
 
-    /// Set oracle address
-    pub fn set_oracle(&mut self, oracle: Address) {
-        self.oracle.set(oracle);
+    /// Set Styks oracle address
+    pub fn set_styks_oracle(&mut self, styks_oracle: Address) {
+        self.styks_oracle.set(styks_oracle);
+    }
+
+    /// Set stCSPR ybToken address (for exchange rate)
+    pub fn set_scspr_ybtoken(&mut self, scspr_ybtoken: Address) {
+        self.scspr_ybtoken.set(scspr_ybtoken);
     }
 
     // ========== Liquidation Functions ==========
@@ -424,18 +425,24 @@ impl LiquidationEngine {
     }
 
     fn get_price(&self, collateral_id: CollateralId) -> U256 {
-        let oracle_addr = self.oracle.get().expect("oracle not set");
-        let coll_id: u8 = match collateral_id {
-            CollateralId::Cspr => 0,
-            CollateralId::SCSPR => 1,
+        let styks_addr = self.styks_oracle.get().expect("styks_oracle not set");
+
+        // Get stCSPR exchange rate if needed
+        let scspr_rate = if matches!(collateral_id, CollateralId::SCSPR) {
+            self.get_scspr_exchange_rate()
+        } else {
+            None
         };
 
-        // Cross-contract call to oracle.get_price()
-        let args = runtime_args! {
-            "collateral_id" => coll_id
-        };
-        let call_def = CallDef::new("get_price", false, args);
-        self.env().call_contract::<U256>(oracle_addr, call_def)
+        // Call Styks oracle directly
+        StyksOracle::get_price(&self.env(), styks_addr, collateral_id, scspr_rate)
+    }
+
+    fn get_scspr_exchange_rate(&self) -> Option<U256> {
+        let ybtoken_addr = self.scspr_ybtoken.get()?;
+        let args = runtime_args! {};
+        let call_def = CallDef::new("get_exchange_rate", false, args);
+        Some(self.env().call_contract::<U256>(ybtoken_addr, call_def))
     }
 
     fn execute_liquidation(&mut self, collateral_id: CollateralId, result: &LiquidationResult) {
