@@ -5,18 +5,17 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
-import { CASPER_TESTNET, SUPPORTED_WALLET, isLSTDeployed } from '@/lib/config';
+import { CASPER_TESTNET, SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
-  { href: '/lst', label: 'LST', requiresLst: true },
+  { href: '/lst', label: 'LST' },
 ];
 
 export function Header() {
   const pathname = usePathname();
   const { isInstalled, isConnected, publicKey, isBusy, connect, disconnect } = useCasperWallet();
-  const lstDeployed = isLSTDeployed();
 
   const buttonLabel = !isInstalled
     ? 'Casper Wallet required'
@@ -50,9 +49,6 @@ export function Header() {
           {/* Navigation */}
           <nav className="hidden sm:flex items-center gap-1 ml-4">
             {NAV_ITEMS.map((item) => {
-              // Hide LST nav if not deployed
-              if (item.requiresLst && !lstDeployed) return null;
-
               const isActive = pathname === item.href;
               return (
                 <Link
@@ -90,8 +86,6 @@ export function Header() {
       {/* Mobile Navigation */}
       <div className="sm:hidden border-t border-gray-100 px-4 py-2 flex gap-2">
         {NAV_ITEMS.map((item) => {
-          if (item.requiresLst && !lstDeployed) return null;
-
           const isActive = pathname === item.href;
           return (
             <Link
