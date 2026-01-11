@@ -15,19 +15,37 @@ type CasperWalletHelper = {
   signMessage?: (message: string, publicKey: string) => Promise<string>;
 };
 
-const HELPER_CANDIDATES = [
-  'casperlabsHelper',
-  'CasperWalletProvider',
-  'casperWalletProvider',
-  'CasperWallet',
-  'casperWallet',
-  'CasperSigner',
-  'casperwallet',
-] as const;
+// Cache the provider instance to avoid re-creating it
+let cachedProvider: CasperWalletHelper | null = null;
 
 function getCasperHelper(): CasperWalletHelper | null {
   if (typeof window === 'undefined') return null;
-  for (const key of HELPER_CANDIDATES) {
+
+  // Return cached provider if available
+  if (cachedProvider) return cachedProvider;
+
+  // Modern Casper Wallet: CasperWalletProvider is a factory function
+  const providerFactory = (window as any).CasperWalletProvider;
+  if (typeof providerFactory === 'function') {
+    try {
+      cachedProvider = providerFactory() as CasperWalletHelper;
+      return cachedProvider;
+    } catch {
+      // Factory call failed, continue to fallbacks
+    }
+  }
+
+  // Legacy fallbacks for older wallet versions
+  const legacyCandidates = [
+    'casperlabsHelper',
+    'casperWalletProvider',
+    'CasperWallet',
+    'casperWallet',
+    'CasperSigner',
+    'casperwallet',
+  ] as const;
+
+  for (const key of legacyCandidates) {
     const candidate = (window as any)[key];
     if (!candidate) continue;
     if (
@@ -36,9 +54,11 @@ function getCasperHelper(): CasperWalletHelper | null {
       typeof candidate.getActivePublicKey === 'function' ||
       typeof candidate.getPublicKey === 'function'
     ) {
-      return candidate as CasperWalletHelper;
+      cachedProvider = candidate as CasperWalletHelper;
+      return cachedProvider;
     }
   }
+
   return null;
 }
 
@@ -143,7 +163,7 @@ export function useCasperWallet() {
 
     intervalId = window.setInterval(() => {
       void tick();
-    }, 1000);
+    }, 500); // Check more frequently for wallet injection
 
     const onFocus = () => {
       void refresh();
@@ -154,8 +174,38 @@ export function useCasperWallet() {
       }
     };
 
+    // Listen to Casper Wallet events (modern wallet dispatches these)
+    const onWalletEvent = (event: Event) => {
+      try {
+        const detail = (event as CustomEvent).detail;
+        if (detail) {
+          // Handle wallet state changes
+          if (detail.isConnected !== undefined) {
+            setIsConnected(detail.isConnected);
+          }
+          if (detail.activeKey) {
+            setPublicKey(detail.activeKey);
+          }
+          if (detail.isLocked) {
+            setIsConnected(false);
+            setPublicKey(null);
+          }
+        }
+      } catch {
+        // Fallback to refresh
+        void refresh();
+      }
+    };
+
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
+
+    // Casper Wallet custom events
+    window.addEventListener('casper-wallet:connected', onWalletEvent);
+    window.addEventListener('casper-wallet:disconnected', onWalletEvent);
+    window.addEventListener('casper-wallet:activeKeyChanged', onWalletEvent);
+    window.addEventListener('casper-wallet:locked', onWalletEvent);
+    window.addEventListener('casper-wallet:unlocked', onWalletEvent);
 
     return () => {
       if (intervalId !== undefined) {
@@ -163,6 +213,11 @@ export function useCasperWallet() {
       }
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('casper-wallet:connected', onWalletEvent);
+      window.removeEventListener('casper-wallet:disconnected', onWalletEvent);
+      window.removeEventListener('casper-wallet:activeKeyChanged', onWalletEvent);
+      window.removeEventListener('casper-wallet:locked', onWalletEvent);
+      window.removeEventListener('casper-wallet:unlocked', onWalletEvent);
     };
   }, [refresh]);
 
