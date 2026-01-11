@@ -74,7 +74,7 @@ export SCSPR_LST_HASH=hash-<your-scspr-lst-hash>
 
 # Protocol parameters (optional overrides)
 export MCR_BPS=11000           # 110% minimum collateral ratio
-export MIN_DEBT=2000000000000000000000  # 2000 gUSD minimum
+export MIN_DEBT=1000000000000000000  # 1 gUSD minimum
 export BORROWING_FEE_BPS=50    # 0.5% borrowing fee
 export REDEMPTION_FEE_BPS=50   # 0.5% redemption fee
 export LIQUIDATION_PENALTY_BPS=1000  # 10% liquidation penalty
@@ -175,7 +175,7 @@ Run the smoke test to verify basic functionality:
   },
   "configuration": {
     "mcrBps": 11000,
-    "minDebt": "2000000000000000000000",
+    "minDebt": "1000000000000000000",
     "borrowingFeeBps": 50
   },
   "status": "deployed"
