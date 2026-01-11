@@ -31,9 +31,12 @@ import {
   getDeployStatus,
   type DeployArg,
 } from '@/lib/casperDeploy';
-
-// Refresh interval
-const REFRESH_INTERVAL_MS = 30_000;
+import {
+  DATA_REFRESH_INTERVAL_MS,
+  DEPLOY_POLL_INTERVAL_MS,
+  DEPLOY_POLL_MAX_ATTEMPTS,
+  APPROVAL_POLL_MAX_ATTEMPTS,
+} from '@/lib/constants';
 
 // Transaction status
 export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
@@ -185,7 +188,7 @@ export function useCdp(): CdpState & CdpActions {
   // Initial load and periodic refresh
   useEffect(() => {
     void refresh();
-    const intervalId = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    const intervalId = setInterval(() => void refresh(), DATA_REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalId);
   }, [refresh]);
 
@@ -332,8 +335,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(deployHash);
 
           // Poll for status
-          for (let i = 0; i < 60; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(deployHash);
             if (status === 'success') {
               setTxStatus('success');
@@ -382,8 +385,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for approve
-          for (let i = 0; i < 24; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(approveHash);
             if (status === 'error') {
               setTxError('Approval transaction failed');
@@ -420,8 +423,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(openHash);
 
           // Poll for status
-          for (let i = 0; i < 60; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(openHash);
             if (status === 'success') {
               setTxStatus('success');
@@ -511,8 +514,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for gUSD approve
-          for (let i = 0; i < 24; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(approveHash);
             if (status === 'error') {
               setTxError('gUSD approval failed');
@@ -557,8 +560,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for stCSPR approve
-          for (let i = 0; i < 24; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(approveHash);
             if (status === 'error') {
               setTxError('stCSPR approval failed');
@@ -685,8 +688,8 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for gUSD approve
-          for (let i = 0; i < 24; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+            await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(approveHash);
             if (status === 'error') {
               setTxError('gUSD approval failed');

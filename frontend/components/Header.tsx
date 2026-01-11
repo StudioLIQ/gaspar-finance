@@ -1,19 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
+import { useBalances } from '@/hooks/useBalances';
 import { SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
-import {
-  getAccountCsprBalance,
-  getLstBalance,
-  getGusdBalance,
-  formatCsprAmount,
-} from '@/lib/casperRpc';
+import { formatCsprAmount } from '@/lib/casperRpc';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
@@ -22,53 +17,10 @@ const NAV_ITEMS = [
   { href: '/redeem', label: 'Redeem' },
 ];
 
-interface Balances {
-  cspr: bigint | null;
-  scspr: bigint | null;
-  gusd: bigint | null;
-}
-
 export function Header() {
   const pathname = usePathname();
   const { isInstalled, isConnected, publicKey, isBusy, connect, disconnect } = useCasperWallet();
-
-  const [balances, setBalances] = useState<Balances>({
-    cspr: null,
-    scspr: null,
-    gusd: null,
-  });
-  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
-
-  // Fetch balances when connected
-  const fetchBalances = useCallback(async () => {
-    if (!isConnected || !publicKey) {
-      setBalances({ cspr: null, scspr: null, gusd: null });
-      return;
-    }
-
-    setIsLoadingBalances(true);
-    try {
-      const [csprBalance, lstBalance, gusdBalance] = await Promise.all([
-        getAccountCsprBalance(publicKey),
-        getLstBalance(publicKey),
-        getGusdBalance(publicKey),
-      ]);
-
-      setBalances({
-        cspr: csprBalance,
-        scspr: lstBalance?.scsprBalance ?? null,
-        gusd: gusdBalance,
-      });
-    } catch (err) {
-      console.error('Failed to fetch balances:', err);
-    } finally {
-      setIsLoadingBalances(false);
-    }
-  }, [isConnected, publicKey]);
-
-  useEffect(() => {
-    void fetchBalances();
-  }, [fetchBalances]);
+  const { balances, isLoading: isLoadingBalances } = useBalances({ isConnected, publicKey });
 
   const buttonLabel = !isInstalled
     ? 'Casper Wallet required'
@@ -98,13 +50,14 @@ export function Header() {
           </Link>
 
           {/* Navigation */}
-          <nav className="hidden sm:flex items-center gap-1 ml-4 flex-shrink-0">
+          <nav className="hidden sm:flex items-center gap-1 ml-4 flex-shrink-0" aria-label="Main navigation">
             {NAV_ITEMS.map((item) => {
               const isActive = pathname === item.href;
               return (
                 <Link
                   key={item.href}
                   href={item.href}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
                     'px-4 py-2 text-sm font-medium rounded-lg transition-colors',
                     isActive
@@ -173,13 +126,14 @@ export function Header() {
       </div>
 
       {/* Mobile Navigation */}
-      <div className="sm:hidden border-t border-gray-100 px-4 py-2 flex gap-2">
+      <nav className="sm:hidden border-t border-gray-100 px-4 py-2 flex gap-2" aria-label="Mobile navigation">
         {NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex-1 py-2 text-center text-sm font-medium rounded-lg transition-colors',
                 isActive
@@ -191,7 +145,7 @@ export function Header() {
             </Link>
           );
         })}
-      </div>
+      </nav>
     </header>
   );
 }

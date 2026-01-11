@@ -2,20 +2,28 @@
 //
 // Provides utilities for building and signing Casper deploys.
 // Used for interacting with LST contracts (stake, unstake, claim).
+// Uses casper-js-sdk v2.x for proper deploy construction.
 
 import { getNetworkConfig } from './config';
+import {
+  CLValueBuilder,
+  CLPublicKey,
+  DeployUtil,
+  RuntimeArgs,
+} from 'casper-js-sdk';
 
 // ===== Constants =====
 
-// Default payment amount in motes (0.5 CSPR - adjust as needed)
-const DEFAULT_PAYMENT_MOTES = '500000000';
-// Higher payment for proxy calls (5 CSPR for WASM execution)
-const PROXY_PAYMENT_MOTES = '5000000000';
+// Default payment amount in motes (5 CSPR for standard contract calls)
+const DEFAULT_PAYMENT_MOTES = '5000000000';
+// Higher payment for proxy calls (50 CSPR for WASM execution with value transfer)
+const PROXY_PAYMENT_MOTES = '50000000000';
 // TTL for deploys (30 minutes)
 const DEPLOY_TTL_MS = 30 * 60 * 1000;
 
 // Proxy caller WASM paths
-const PROXY_CALLER_WASM_PATH = '/odra/proxy_caller.wasm';
+// Use proxy_caller_with_return.wasm for proper return value handling (matching magni-cspr repo)
+const PROXY_CALLER_WASM_PATH = '/odra/proxy_caller_with_return.wasm';
 
 // WASM cache to avoid repeated fetches
 let proxyCallerWasmCache: Uint8Array | null = null;
@@ -78,12 +86,12 @@ export interface SignedDeploy {
 
 /**
  * Load proxy_caller.wasm from public directory
- * Returns the WASM bytes as a hex string for the deploy session
+ * Returns the WASM bytes as Uint8Array
  */
-export async function loadProxyCallerWasm(): Promise<string> {
+export async function loadProxyCallerWasmBytes(): Promise<Uint8Array> {
   // Return cached if available
   if (proxyCallerWasmCache) {
-    return uint8ArrayToHex(proxyCallerWasmCache);
+    return proxyCallerWasmCache;
   }
 
   // Fetch the WASM file
@@ -95,7 +103,17 @@ export async function loadProxyCallerWasm(): Promise<string> {
   const arrayBuffer = await response.arrayBuffer();
   proxyCallerWasmCache = new Uint8Array(arrayBuffer);
 
-  return uint8ArrayToHex(proxyCallerWasmCache);
+  return proxyCallerWasmCache;
+}
+
+/**
+ * Load proxy_caller.wasm from public directory
+ * Returns the WASM bytes as a hex string for the deploy session
+ * @deprecated Use loadProxyCallerWasmBytes() instead
+ */
+export async function loadProxyCallerWasm(): Promise<string> {
+  const bytes = await loadProxyCallerWasmBytes();
+  return uint8ArrayToHex(bytes);
 }
 
 /**
@@ -109,103 +127,16 @@ function uint8ArrayToHex(bytes: Uint8Array): string {
   return hex;
 }
 
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToUint8Array(hex: string): Uint8Array {
+  const cleanHex = hex.replace(/^0x/, '');
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
   }
-  return out;
-}
-
-function encodeU32LE(value: number): Uint8Array {
-  const buf = new Uint8Array(4);
-  const view = new DataView(buf.buffer);
-  view.setUint32(0, value, true);
-  return buf;
-}
-
-function encodeString(value: string): Uint8Array {
-  const bytes = new TextEncoder().encode(value);
-  return concatBytes([encodeU32LE(bytes.length), bytes]);
-}
-
-function encodeBigIntLE(value: bigint): Uint8Array {
-  if (value === 0n) return new Uint8Array([0]);
-  const bytes: number[] = [];
-  let temp = value;
-  while (temp > 0n) {
-    bytes.push(Number(temp & 0xffn));
-    temp >>= 8n;
-  }
-  return new Uint8Array(bytes);
-}
-
-function encodeU256(value: bigint): Uint8Array {
-  const bytes = encodeBigIntLE(value);
-  return concatBytes([new Uint8Array([bytes.length]), bytes]);
-}
-
-function encodeU512(value: bigint): Uint8Array {
-  const bytes = encodeBigIntLE(value);
-  return concatBytes([new Uint8Array([bytes.length]), bytes]);
-}
-
-function encodeClTypeTag(clType: string): Uint8Array {
-  switch (clType) {
-    case 'U8':
-      return new Uint8Array([3]);
-    case 'U32':
-      return new Uint8Array([4]);
-    case 'U256':
-      return new Uint8Array([7]);
-    case 'U512':
-      return new Uint8Array([8]);
-    case 'String':
-      return new Uint8Array([10]);
-    default:
-      throw new Error(`Unsupported CLType for proxy args: ${clType}`);
-  }
-}
-
-function encodeClValue(arg: DeployArg): Uint8Array {
-  switch (arg.clType) {
-    case 'U8': {
-      const n = typeof arg.value === 'string' ? Number(arg.value) : Number(arg.value);
-      const valueBytes = new Uint8Array([n & 0xff]);
-      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
-    }
-    case 'U32': {
-      const n = typeof arg.value === 'string' ? Number(arg.value) : Number(arg.value);
-      const valueBytes = encodeU32LE(n);
-      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
-    }
-    case 'U256': {
-      const valueBytes = encodeU256(BigInt(arg.value as string));
-      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
-    }
-    case 'U512': {
-      const valueBytes = encodeU512(BigInt(arg.value as string));
-      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
-    }
-    case 'String': {
-      const valueBytes = encodeString(String(arg.value));
-      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
-    }
-    default:
-      throw new Error(`Unsupported CLType for proxy args: ${arg.clType}`);
-  }
-}
-
-function serializeRuntimeArgs(args: DeployArg[]): Uint8Array {
-  const parts: Uint8Array[] = [encodeU32LE(args.length)];
-  for (const arg of args) {
-    parts.push(encodeString(arg.name));
-    parts.push(encodeClValue(arg));
-  }
-  return concatBytes(parts);
+  return bytes;
 }
 
 /**
@@ -223,174 +154,172 @@ export async function isProxyCallerAvailable(): Promise<boolean> {
 // ===== Deploy Building Helpers =====
 
 /**
- * Format argument for RuntimeArgs serialization
+ * Convert DeployArg to CLValue using SDK v2.x
  */
-function formatArg(arg: DeployArg): [string, { cl_type: string; bytes: string; parsed: unknown }] {
-  // Note: In a real implementation, you'd properly serialize CLValues.
-  // For browser compatibility, we'll create a simplified format that
-  // matches what the Casper Wallet expects.
-  return [
-    arg.name,
-    {
-      cl_type: arg.clType,
-      bytes: '', // Will be filled by Casper SDK/Wallet
-      parsed: arg.value,
-    },
-  ];
+function argToCLValue(arg: DeployArg) {
+  const { clType, value } = arg;
+
+  switch (clType) {
+    case 'U8':
+      return CLValueBuilder.u8(Number(value));
+    case 'U32':
+      return CLValueBuilder.u32(Number(value));
+    case 'U64':
+      return CLValueBuilder.u64(String(value));
+    case 'U256':
+      return CLValueBuilder.u256(String(value));
+    case 'U512':
+      return CLValueBuilder.u512(String(value));
+    case 'String':
+      return CLValueBuilder.string(String(value));
+    case 'Bool':
+      return CLValueBuilder.bool(Boolean(value));
+    case 'Key': {
+      // Key can be hash-xxx or account-hash-xxx, etc.
+      const keyStr = String(value);
+      return CLValueBuilder.key(CLValueBuilder.byteArray(hexToUint8Array(keyStr.replace(/^hash-/, ''))));
+    }
+    case 'ByteArray': {
+      const bytes = hexToUint8Array(String(value));
+      return CLValueBuilder.byteArray(bytes);
+    }
+    default:
+      throw new Error(`Unsupported CLType: ${clType}`);
+  }
 }
 
 /**
- * Create a standard contract call deploy (without attached CSPR)
+ * Build RuntimeArgs from DeployArg array using SDK v2.x
+ */
+function buildRuntimeArgs(args: DeployArg[]): RuntimeArgs {
+  const runtimeArgs = RuntimeArgs.fromMap({});
+  for (const arg of args) {
+    runtimeArgs.insert(arg.name, argToCLValue(arg));
+  }
+  return runtimeArgs;
+}
+
+/**
+ * Create a standard contract call deploy using SDK v2.x (without attached CSPR)
+ * Uses StoredVersionContractByHash for proper contract versioning
  */
 export function buildContractCallDeploy(
   senderPublicKey: string,
   params: DeployParams
 ): object {
   const network = getNetworkConfig();
-  const now = Date.now();
+
+  // Parse sender public key
+  const senderPubKey = CLPublicKey.fromHex(senderPublicKey);
 
   // Normalize contract hash format
   const contractHashClean = params.contractHash.replace(/^hash-/, '');
+  const contractHashBytes = hexToUint8Array(contractHashClean);
 
-  return {
-    deploy: {
-      hash: '', // Will be computed by SDK
-      header: {
-        account: senderPublicKey,
-        timestamp: new Date(now).toISOString(),
-        ttl: `${DEPLOY_TTL_MS}ms`,
-        gas_price: 1,
-        body_hash: '', // Will be computed by SDK
-        dependencies: [],
-        chain_name: network.chainName,
-      },
-      payment: {
-        ModuleBytes: {
-          module_bytes: '',
-          args: [
-            [
-              'amount',
-              {
-                cl_type: 'U512',
-                bytes: '',
-                parsed: params.paymentMotes || DEFAULT_PAYMENT_MOTES,
-              },
-            ],
-          ],
-        },
-      },
-      session: {
-        StoredContractByHash: {
-          hash: contractHashClean,
-          entry_point: params.entryPoint,
-          args: params.args.map(formatArg),
-        },
-      },
-      approvals: [],
-    },
-  };
+  // Build runtime args using SDK
+  const sessionArgs = buildRuntimeArgs(params.args);
+
+  // Create payment (standard payment)
+  const paymentAmount = params.paymentMotes || DEFAULT_PAYMENT_MOTES;
+
+  // Create deploy using DeployUtil
+  const deploy = DeployUtil.makeDeploy(
+    new DeployUtil.DeployParams(
+      senderPubKey,
+      network.chainName,
+      1,
+      DEPLOY_TTL_MS
+    ),
+    DeployUtil.ExecutableDeployItem.newStoredVersionContractByHash(
+      contractHashBytes,
+      null, // use latest version
+      params.entryPoint,
+      sessionArgs
+    ),
+    DeployUtil.standardPayment(paymentAmount)
+  );
+
+  // Convert to JSON format for wallet signing
+  return DeployUtil.deployToJson(deploy);
+}
+
+/**
+ * Create a proxy caller deploy using casper-js-sdk v2.x
+ *
+ * Uses proxy_caller.wasm to call a contract with attached motes.
+ * Uses the SDK to properly construct and serialize the deploy.
+ *
+ * @param senderPublicKey - The sender's public key hex string
+ * @param params - Deploy parameters including target contract and attached value
+ * @param wasmBytes - proxy_caller.wasm bytes as Uint8Array
+ */
+export function buildProxyCallerDeployWithSdk(
+  senderPublicKey: string,
+  params: ProxyDeployParams,
+  wasmBytes: Uint8Array
+): object {
+  const network = getNetworkConfig();
+
+  // Parse sender public key
+  const senderPubKey = CLPublicKey.fromHex(senderPublicKey);
+
+  // Normalize contract package hash format (remove known prefixes if present)
+  const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
+  const packageHashBytes = hexToUint8Array(packageHashClean);
+
+  // Build runtime args for the target contract call
+  const targetArgs = buildRuntimeArgs(params.args);
+
+  // Serialize the runtime args to bytes using SDK
+  // This is the format that proxy_caller expects
+  const argsBytes = targetArgs.toBytes().unwrap();
+
+  // Create session args for proxy_caller
+  // Parameter names must match exactly: package_hash, entry_point, args, attached_value, amount
+  const sessionArgs = RuntimeArgs.fromMap({
+    package_hash: CLValueBuilder.byteArray(packageHashBytes),
+    entry_point: CLValueBuilder.string(params.entryPoint),
+    args: CLValueBuilder.list(Array.from(argsBytes).map(b => CLValueBuilder.u8(b))),
+    attached_value: CLValueBuilder.u512(params.attachedMotes),
+    amount: CLValueBuilder.u512(params.attachedMotes),
+  });
+
+  // Create payment (standard payment)
+  const paymentAmount = params.paymentMotes || PROXY_PAYMENT_MOTES;
+
+  // Create deploy using DeployUtil with module bytes
+  const deploy = DeployUtil.makeDeploy(
+    new DeployUtil.DeployParams(
+      senderPubKey,
+      network.chainName,
+      1,
+      DEPLOY_TTL_MS
+    ),
+    DeployUtil.ExecutableDeployItem.newModuleBytes(wasmBytes, sessionArgs),
+    DeployUtil.standardPayment(paymentAmount)
+  );
+
+  // Convert to JSON format for wallet signing
+  return DeployUtil.deployToJson(deploy);
 }
 
 /**
  * Create a proxy caller deploy (for payable entry points with attached CSPR)
  *
  * Uses proxy_caller.wasm to call a contract with attached motes.
- * The WASM bytes must be loaded separately using loadProxyCallerWasm().
+ * This is a legacy wrapper that accepts hex string WASM.
  *
  * @param senderPublicKey - The sender's public key
  * @param params - Deploy parameters including target contract and attached value
- * @param wasmBase64 - Base64-encoded proxy_caller.wasm bytes
+ * @param wasmHex - Hex-encoded proxy_caller.wasm bytes
  */
 export function buildProxyCallerDeploy(
   senderPublicKey: string,
   params: ProxyDeployParams,
-  wasmBase64: string
+  wasmHex: string
 ): object {
-  const network = getNetworkConfig();
-  const now = Date.now();
-
-  // Normalize contract package hash format (remove known prefixes if present)
-  const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
-
-  const runtimeArgsBytes = serializeRuntimeArgs(params.args);
-  const runtimeArgsHex = uint8ArrayToHex(runtimeArgsBytes);
-  const bytesValue = concatBytes([encodeU32LE(runtimeArgsBytes.length), runtimeArgsBytes]);
-
-  // Odra proxy_caller expects these session args:
-  // - contract_package_hash: AccountHash/ContractPackageHash (32 bytes)
-  // - entry_point: String
-  // - args: Bytes (serialized RuntimeArgs)
-  // - attached_value: U512 (amount to attach)
-  return {
-    deploy: {
-      hash: '',
-      header: {
-        account: senderPublicKey,
-        timestamp: new Date(now).toISOString(),
-        ttl: `${DEPLOY_TTL_MS}ms`,
-        gas_price: 1,
-        body_hash: '',
-        dependencies: [],
-        chain_name: network.chainName,
-      },
-      payment: {
-        ModuleBytes: {
-          module_bytes: '',
-          args: [
-            [
-              'amount',
-              {
-                cl_type: 'U512',
-                bytes: '',
-                parsed: params.paymentMotes || PROXY_PAYMENT_MOTES,
-              },
-            ],
-          ],
-        },
-      },
-      session: {
-        ModuleBytes: {
-          // Base64-encoded WASM bytes
-          module_bytes: wasmBase64,
-          args: [
-            [
-              'contract_package_hash',
-              {
-                cl_type: { ByteArray: 32 },
-                bytes: '',
-                parsed: packageHashClean,
-              },
-            ],
-            [
-              'entry_point',
-              {
-                cl_type: 'String',
-                bytes: '',
-                parsed: params.entryPoint,
-              },
-            ],
-            [
-              'args',
-              {
-                cl_type: 'Bytes',
-                bytes: uint8ArrayToHex(bytesValue),
-                parsed: runtimeArgsHex,
-              },
-            ],
-            [
-              'attached_value',
-              {
-                cl_type: 'U512',
-                bytes: '',
-                parsed: params.attachedMotes,
-              },
-            ],
-          ],
-        },
-      },
-      approvals: [],
-    },
-  };
+  const wasmBytes = hexToUint8Array(wasmHex);
+  return buildProxyCallerDeployWithSdk(senderPublicKey, params, wasmBytes);
 }
 
 /**
@@ -400,13 +329,13 @@ export function buildProxyCallerDeploy(
  * @param senderPublicKey - The sender's public key
  * @param ybTokenPackageHash - The ybToken contract package hash
  * @param csprMotes - Amount of CSPR to deposit (in motes)
- * @param wasmBase64 - Base64-encoded proxy_caller.wasm bytes
+ * @param wasmHex - Hex-encoded proxy_caller.wasm bytes
  */
 export function buildDepositDeploy(
   senderPublicKey: string,
   ybTokenPackageHash: string,
   csprMotes: string,
-  wasmBase64: string
+  wasmHex: string
 ): object {
   return buildProxyCallerDeploy(
     senderPublicKey,
@@ -416,8 +345,21 @@ export function buildDepositDeploy(
       args: [], // deposit() takes no explicit args, only attached value
       attachedMotes: csprMotes,
     },
-    wasmBase64
+    wasmHex
   );
+}
+
+// ===== RPC Endpoint Helper =====
+
+/**
+ * Get the RPC endpoint - uses /api/rpc proxy in browser to avoid CORS
+ */
+function getRpcEndpoint(): string {
+  if (typeof window !== 'undefined') {
+    return '/api/rpc';
+  }
+  const network = getNetworkConfig();
+  return network.rpcUrl;
 }
 
 // ===== Deploy Submission =====
@@ -426,9 +368,42 @@ export function buildDepositDeploy(
  * Submit a signed deploy to the Casper node
  */
 export async function submitDeploy(signedDeployJson: unknown): Promise<string> {
-  const network = getNetworkConfig();
+  const rpcUrl = getRpcEndpoint();
 
-  const response = await fetch(network.rpcUrl, {
+  // Extract the deploy object - wallet may return { deploy: {...}, cancelled: false, ... }
+  // We need to extract just the deploy and remove wallet-specific fields like 'cancelled'
+  let rawDeploy: unknown;
+  if (
+    signedDeployJson &&
+    typeof signedDeployJson === 'object' &&
+    'deploy' in signedDeployJson
+  ) {
+    rawDeploy = (signedDeployJson as { deploy: unknown }).deploy;
+  } else {
+    rawDeploy = signedDeployJson;
+  }
+
+  // Clean the deploy object - only keep valid deploy fields
+  let deployObject: unknown;
+  if (
+    rawDeploy &&
+    typeof rawDeploy === 'object' &&
+    'hash' in rawDeploy &&
+    'header' in rawDeploy
+  ) {
+    const rd = rawDeploy as Record<string, unknown>;
+    deployObject = {
+      hash: rd.hash,
+      header: rd.header,
+      payment: rd.payment,
+      session: rd.session,
+      approvals: rd.approvals,
+    };
+  } else {
+    deployObject = rawDeploy;
+  }
+
+  const response = await fetch(rpcUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -437,7 +412,9 @@ export async function submitDeploy(signedDeployJson: unknown): Promise<string> {
       jsonrpc: '2.0',
       id: Date.now(),
       method: 'account_put_deploy',
-      params: [signedDeployJson],
+      params: {
+        deploy: deployObject,
+      },
     }),
   });
 
@@ -448,23 +425,101 @@ export async function submitDeploy(signedDeployJson: unknown): Promise<string> {
   const data = await response.json();
 
   if (data.error) {
-    throw new Error(`Deploy submission error: ${data.error.message}`);
+    // Log full error details for debugging
+    console.error('[submitDeploy] RPC error:', JSON.stringify(data.error, null, 2));
+    console.error('[submitDeploy] Deploy sent:', JSON.stringify(deployObject, null, 2));
+    const errorDetail = data.error.data ? `: ${JSON.stringify(data.error.data)}` : '';
+    throw new Error(`Deploy submission error: ${data.error.message}${errorDetail}`);
   }
 
   // Return the deploy hash
-  return data.result?.deploy_hash || (signedDeployJson as any)?.deploy?.hash || '';
+  return data.result?.deploy_hash || (deployObject as Record<string, unknown>)?.hash as string || '';
 }
 
 /**
  * Check deploy status
+ * Supports both Casper 1.x (info_get_deploy) and 2.0 (info_get_transaction) formats
  */
 export async function getDeployStatus(
   deployHash: string
 ): Promise<'pending' | 'success' | 'error'> {
-  const network = getNetworkConfig();
+  const rpcUrl = getRpcEndpoint();
 
   try {
-    const response = await fetch(network.rpcUrl, {
+    // Try Casper 2.0 format first (info_get_transaction)
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'info_get_transaction',
+        params: {
+          transaction_hash: {
+            Deploy: deployHash,
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      return 'pending';
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      // If info_get_transaction fails, try legacy info_get_deploy
+      return await getDeployStatusLegacy(deployHash);
+    }
+
+    // Casper 2.0 format: check execution_info.execution_result
+    const executionInfo = data.result?.execution_info;
+    if (!executionInfo || !executionInfo.execution_result) {
+      return 'pending';
+    }
+
+    const execResult = executionInfo.execution_result;
+
+    // Version2 format
+    if (execResult.Version2) {
+      const v2Result = execResult.Version2;
+      // If error_message is null or undefined, it's a success
+      if (v2Result.error_message === null || v2Result.error_message === undefined) {
+        return 'success';
+      } else {
+        return 'error';
+      }
+    }
+
+    // Version1 format (in case node returns this)
+    if (execResult.Version1) {
+      const v1Result = execResult.Version1;
+      if (v1Result.Success) {
+        return 'success';
+      } else if (v1Result.Failure) {
+        return 'error';
+      }
+    }
+
+    return 'pending';
+  } catch {
+    return 'pending';
+  }
+}
+
+/**
+ * Legacy deploy status check for Casper 1.x
+ */
+async function getDeployStatusLegacy(
+  deployHash: string
+): Promise<'pending' | 'success' | 'error'> {
+  const rpcUrl = getRpcEndpoint();
+
+  try {
+    const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

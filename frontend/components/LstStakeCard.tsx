@@ -7,9 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import type { LstExchangeRate, TxStatus } from '@/hooks/useLst';
 import { formatCsprAmount, parseCsprInput } from '@/lib/casperRpc';
-
-// Casper network minimum stake requirement
-const MIN_STAKE_CSPR = BigInt('500000000000'); // 500 CSPR in motes
+import { MIN_STAKE_CSPR_MOTES, GAS_BUFFER_MOTES } from '@/lib/constants';
 
 interface LstStakeCardProps {
   exchangeRate: LstExchangeRate | null;
@@ -40,8 +38,7 @@ export function LstStakeCard({
   // Handle max button click (leave 5 CSPR for gas)
   const handleMax = () => {
     if (userCsprBalance !== null) {
-      const gasBuffer = BigInt('5000000000'); // 5 CSPR
-      const maxAmount = userCsprBalance > gasBuffer ? userCsprBalance - gasBuffer : BigInt(0);
+      const maxAmount = userCsprBalance > GAS_BUFFER_MOTES ? userCsprBalance - GAS_BUFFER_MOTES : BigInt(0);
       const formatted = formatCsprAmount(maxAmount);
       setAmount(formatted);
     }
@@ -69,7 +66,7 @@ export function LstStakeCard({
 
   // Check minimum stake requirement
   const parsedAmount = parseCsprInput(amount);
-  const isBelowMinimum = parsedAmount !== null && parsedAmount < MIN_STAKE_CSPR;
+  const isBelowMinimum = parsedAmount !== null && parsedAmount < MIN_STAKE_CSPR_MOTES;
   const canStake = isConnected && amount && preview && !isLoading && !isBelowMinimum;
 
   return (

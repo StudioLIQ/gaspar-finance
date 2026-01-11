@@ -219,6 +219,17 @@ interface StoredValue {
     entry_points: unknown[];
     protocol_version: string;
   };
+  // Casper 2.0 format
+  AddressableEntity?: {
+    package_hash: string;
+    byte_code_hash: string;
+    named_keys: NamedKey[];
+    entry_points: unknown[];
+    protocol_version: string;
+    main_purse?: string;
+    associated_keys?: unknown[];
+    action_thresholds?: unknown;
+  };
   ContractPackage?: unknown;
   Account?: {
     account_hash: string;
@@ -441,17 +452,45 @@ export async function getContractNamedKeys(
 }
 
 // Get contract's package hash from contract hash
+// Supports both Casper 1.x (Contract) and Casper 2.0 (AddressableEntity) formats
 export async function getContractPackageHash(contractHash: string): Promise<string | null> {
   const normalizedHash = contractHash.startsWith('hash-')
     ? contractHash
     : `hash-${contractHash}`;
 
+  console.debug('[getContractPackageHash] querying:', normalizedHash);
+
   const stored = await queryGlobalState(normalizedHash);
-  if (!stored?.Contract?.contract_package_hash) {
+  if (!stored) {
+    console.debug('[getContractPackageHash] no stored value returned');
     return null;
   }
 
-  return stored.Contract.contract_package_hash;
+  console.debug('[getContractPackageHash] stored value keys:', Object.keys(stored));
+
+  // Casper 1.x format
+  if (stored.Contract?.contract_package_hash) {
+    console.debug('[getContractPackageHash] found Contract.contract_package_hash');
+    return stored.Contract.contract_package_hash;
+  }
+
+  // Casper 2.0 format (AddressableEntity)
+  if (stored.AddressableEntity?.package_hash) {
+    console.debug('[getContractPackageHash] found AddressableEntity.package_hash');
+    return stored.AddressableEntity.package_hash;
+  }
+
+  // Alternative field names
+  const anyStored = stored as Record<string, unknown>;
+  if (typeof anyStored.contract_package_hash === 'string') {
+    return anyStored.contract_package_hash;
+  }
+  if (typeof anyStored.package_hash === 'string') {
+    return anyStored.package_hash;
+  }
+
+  console.debug('[getContractPackageHash] package_hash not found in stored value:', JSON.stringify(stored).substring(0, 500));
+  return null;
 }
 
 // Query a value by named_key name from a contract

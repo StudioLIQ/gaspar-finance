@@ -1,22 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
+import { useBalances } from '@/hooks/useBalances';
 import { shortenPublicKey } from '@/lib/utils';
-import {
-  getAccountCsprBalance,
-  getLstBalance,
-  getGusdBalance,
-  formatCsprAmount,
-} from '@/lib/casperRpc';
-
-interface Balances {
-  cspr: bigint | null;
-  scspr: bigint | null;
-  gusd: bigint | null;
-}
+import { formatCsprAmount } from '@/lib/casperRpc';
 
 export function WalletCard() {
   const {
@@ -30,49 +20,13 @@ export function WalletCard() {
     refresh: refreshWallet,
   } = useCasperWallet();
 
-  const [balances, setBalances] = useState<Balances>({
-    cspr: null,
-    scspr: null,
-    gusd: null,
-  });
-  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
-
-  // Fetch balances when connected
-  const fetchBalances = useCallback(async () => {
-    if (!isConnected || !publicKey) {
-      setBalances({ cspr: null, scspr: null, gusd: null });
-      return;
-    }
-
-    setIsLoadingBalances(true);
-    try {
-      const [csprBalance, lstBalance, gusdBalance] = await Promise.all([
-        getAccountCsprBalance(publicKey),
-        getLstBalance(publicKey),
-        getGusdBalance(publicKey),
-      ]);
-
-      setBalances({
-        cspr: csprBalance,
-        scspr: lstBalance?.scsprBalance ?? null,
-        gusd: gusdBalance,
-      });
-    } catch (err) {
-      console.error('Failed to fetch balances:', err);
-    } finally {
-      setIsLoadingBalances(false);
-    }
-  }, [isConnected, publicKey]);
-
-  useEffect(() => {
-    void fetchBalances();
-  }, [fetchBalances]);
+  const { balances, isLoading: isLoadingBalances, refresh: refreshBalances } = useBalances({ isConnected, publicKey });
 
   // Refresh both wallet and balances
   const refresh = useCallback(() => {
     refreshWallet();
-    void fetchBalances();
-  }, [refreshWallet, fetchBalances]);
+    refreshBalances();
+  }, [refreshWallet, refreshBalances]);
 
   return (
     <Card title="Wallet" subtitle="Casper Wallet only">

@@ -36,13 +36,15 @@ export function Button({
     <button
       className={cn(baseStyles, variants[variant], sizes[size], className)}
       disabled={disabled || isLoading}
+      aria-busy={isLoading || undefined}
+      aria-disabled={disabled || isLoading || undefined}
       {...props}
     >
       {isLoading ? (
-        <div className="flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-          Processing...
-        </div>
+        <span className="flex items-center justify-center">
+          <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" aria-hidden="true" />
+          <span>Processing...</span>
+        </span>
       ) : (
         children
       )}

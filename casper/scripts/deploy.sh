@@ -229,7 +229,30 @@ extract_contract_hash() {
   local result
   result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
   result=$(json_only "$result")
-  echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContract != null) | .key' | head -n 1
+
+  # Try Casper 1.x format first (WriteContract)
+  local hash
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContract != null) | .key' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  # Try Casper 2.0 format (AddressableEntity)
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteAddressableEntity != null) | .key' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  # Try looking for entity-contract or hash- keys in transforms
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | .key | select(startswith("entity-contract-") or (startswith("hash-") and (. | test("^hash-[a-f0-9]{64}$"))))' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  echo ""
 }
 
 extract_package_hash() {
@@ -237,7 +260,56 @@ extract_package_hash() {
   local result
   result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
   result=$(json_only "$result")
-  echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContractPackage != null) | .key' | head -n 1
+
+  # Try Casper 1.x format first (WriteContractPackage)
+  local hash
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContractPackage != null) | .key' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  # Try Casper 2.0 format (Package)
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WritePackage != null) | .key' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  # Try looking for contract-package- or package- keys
+  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | .key | select(startswith("contract-package-") or startswith("package-"))' 2>/dev/null | head -n 1)
+  if [ -n "$hash" ] && [ "$hash" != "null" ]; then
+    echo "$hash"
+    return
+  fi
+
+  echo ""
+}
+
+# Lookup package_hash from contract_hash via RPC query
+lookup_package_hash_from_contract() {
+  local contract_hash="$1"
+  local result
+  result=$(casper-client query-global-state \
+    --node-address "$NODE_ADDRESS" \
+    --key "$contract_hash" \
+    --state-root-hash "" 2>/dev/null || true)
+  result=$(json_only "$result")
+
+  if [ -z "$result" ]; then
+    echo ""
+    return
+  fi
+
+  # Extract contract_package_hash from Contract stored value
+  local pkg_hash
+  pkg_hash=$(echo "$result" | jq -r '.result.stored_value.Contract.contract_package_hash // .result.stored_value.AddressableEntity.package_hash // empty' 2>/dev/null)
+  if [ -n "$pkg_hash" ] && [ "$pkg_hash" != "null" ]; then
+    echo "$pkg_hash"
+    return
+  fi
+
+  echo ""
 }
 
 update_configuration() {
@@ -315,6 +387,19 @@ install_contract() {
   if [ -z "$contract_hash" ] || [ "$contract_hash" = "null" ]; then
     echo "ERROR: failed to extract contract hash for $name" >&2
     exit 1
+  fi
+
+  # Fallback: if package_hash not found in deploy transforms, query contract directly
+  if [ -z "$package_hash" ] || [ "$package_hash" = "null" ]; then
+    echo "  (package_hash not in transforms, querying contract...)" >&2
+    package_hash=$(lookup_package_hash_from_contract "$contract_hash")
+  fi
+
+  if [ -z "$package_hash" ] || [ "$package_hash" = "null" ]; then
+    echo "  WARNING: could not extract package_hash for $name" >&2
+    package_hash=""
+  else
+    echo "  package_hash: $package_hash" >&2
   fi
 
   update_record "$name" "$deploy_hash" "$contract_hash" "$package_hash"

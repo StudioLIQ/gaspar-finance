@@ -13,6 +13,12 @@ import {
   type TxStatus,
   type UserBalances,
 } from '@/hooks/useCdp';
+import {
+  GAS_BUFFER_MOTES,
+  CR_HEALTHY_BPS,
+  CR_CAUTION_BPS,
+  CR_WARNING_BPS,
+} from '@/lib/constants';
 
 interface CdpOpenVaultCardProps {
   collateralType: CollateralType;
@@ -93,8 +99,8 @@ export function CdpOpenVaultCard({
   };
 
   const handleMaxCollateral = () => {
-    // Leave some for gas
-    const gasBuffer = collateralType === 'cspr' ? BigInt('5000000000') : BigInt(0);
+    // Leave some for gas (only for CSPR)
+    const gasBuffer = collateralType === 'cspr' ? GAS_BUFFER_MOTES : BigInt(0);
     const maxAmount = userBalance > gasBuffer ? userBalance - gasBuffer : BigInt(0);
     setCollateralAmount(formatCsprAmount(maxAmount));
   };
@@ -113,11 +119,11 @@ export function CdpOpenVaultCard({
     }
   };
 
-  // CR color
+  // CR color based on health
   const getCrColor = (crBps: number) => {
-    if (crBps >= 20000) return 'text-green-600';
-    if (crBps >= 15000) return 'text-yellow-600';
-    if (crBps >= 11000) return 'text-orange-500';
+    if (crBps >= CR_HEALTHY_BPS) return 'text-green-600';
+    if (crBps >= CR_CAUTION_BPS) return 'text-yellow-600';
+    if (crBps >= CR_WARNING_BPS) return 'text-orange-500';
     return 'text-red-600';
   };
 

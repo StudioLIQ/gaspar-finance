@@ -308,24 +308,105 @@ export function useCasperWallet() {
       setError(null);
 
       try {
-        let signedDeploy: unknown;
+        // Ensure deploy is wrapped for wallet - some wallets expect { deploy: {...} } format
+        let wrappedDeploy: { deploy: unknown };
+        let innerDeploy: Record<string, unknown>;
+        if (deployJson && typeof deployJson === 'object' && 'deploy' in deployJson) {
+          wrappedDeploy = deployJson as { deploy: unknown };
+          innerDeploy = wrappedDeploy.deploy as Record<string, unknown>;
+        } else {
+          innerDeploy = deployJson as Record<string, unknown>;
+          wrappedDeploy = { deploy: deployJson };
+        }
+
+        let signResult: unknown;
 
         // Try different signing methods based on wallet implementation
         if (helper.signDeploy) {
-          // CasperLabs Signer style
-          signedDeploy = await helper.signDeploy(deployJson, publicKey);
+          // CasperLabs Signer style - try wrapped first, then unwrapped
+          try {
+            signResult = await helper.signDeploy(wrappedDeploy, publicKey);
+          } catch {
+            // Fallback to unwrapped format
+            signResult = await helper.signDeploy(deployJson, publicKey);
+          }
         } else if (helper.sign) {
           // Casper Wallet style - expects JSON string
-          const deployJsonStr =
-            typeof deployJson === 'string' ? deployJson : JSON.stringify(deployJson);
+          const deployJsonStr = JSON.stringify(wrappedDeploy);
           const result = await helper.sign(deployJsonStr, publicKey);
-          signedDeploy = typeof result === 'string' ? JSON.parse(result) : result;
+          signResult = typeof result === 'string' ? JSON.parse(result) : result;
         } else {
           setError('Wallet does not support deploy signing');
           return null;
         }
 
-        return signedDeploy;
+        // Handle different wallet response formats
+        if (signResult && typeof signResult === 'object') {
+          const sr = signResult as Record<string, unknown>;
+
+          // Check if user cancelled the signing
+          if (sr.cancelled === true) {
+            setError('User cancelled signing');
+            return null;
+          }
+
+          // Check if wallet returned just the signature (Casper Wallet style)
+          if ('signatureHex' in sr || 'signature' in sr) {
+            // Wallet returned signature only - we need to add it to the deploy
+            let signatureHex = sr.signatureHex as string | undefined;
+
+            // Handle Uint8Array signature format
+            if (!signatureHex && sr.signature) {
+              if (sr.signature instanceof Uint8Array) {
+                signatureHex = Array.from(sr.signature)
+                  .map(b => b.toString(16).padStart(2, '0'))
+                  .join('');
+              } else if (typeof sr.signature === 'string') {
+                signatureHex = sr.signature;
+              }
+            }
+
+            if (signatureHex && publicKey) {
+              // Determine signature algorithm prefix from public key
+              // 01 = Ed25519, 02 = Secp256k1
+              const keyPrefix = publicKey.substring(0, 2);
+              const sigPrefix = keyPrefix === '02' ? '02' : '01';
+
+              // Only add prefix if signature doesn't already have one
+              // Ed25519 raw sig: 128 hex chars, Secp256k1 raw sig: 128-130 hex chars
+              // With prefix: starts with 01 or 02
+              let finalSignature = signatureHex;
+              if (!signatureHex.startsWith('01') && !signatureHex.startsWith('02')) {
+                finalSignature = `${sigPrefix}${signatureHex}`;
+              }
+
+              // Build the approval and add to deploy
+              const approval = {
+                signer: publicKey,
+                signature: finalSignature,
+              };
+
+              // Return the complete signed deploy
+              return {
+                ...innerDeploy,
+                approvals: [approval],
+              };
+            }
+          }
+
+          // Check if wallet returned { deploy: {...} } with approvals already added
+          if ('deploy' in sr) {
+            return sr.deploy;
+          }
+
+          // Check if it's already a complete deploy with approvals
+          if ('hash' in sr && 'approvals' in sr) {
+            return sr;
+          }
+        }
+
+        // Return as-is if we couldn't parse the response
+        return signResult;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Deploy signing failed';
         setError(message);
