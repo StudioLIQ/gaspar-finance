@@ -115,28 +115,11 @@ export interface CdpActions {
   resetTxState: () => void;
 }
 
-// DEMO MODE: Set to true to show mock vault data for demo video
-const DEMO_MODE = true;
-
-// Mock vault for demo: 515 CSPR collateral, 1 gUSD debt
-const DEMO_CSPR_VAULT: VaultInfo = {
-  vault: {
-    owner: '',
-    collateralId: 'cspr',
-    collateral: BigInt('515000000000'), // 515 CSPR (9 decimals)
-    debt: BigInt('1000000000000000000'), // 1 gUSD (18 decimals)
-    interestRateBps: 500, // 5%
-    lastAccrualTimestamp: Math.floor(Date.now() / 1000),
-  },
-  icrBps: 103000, // 1030% CR (very safe)
-  collateralValueUsd: BigInt('10300000000000000000'), // $10.30 (18 decimals)
-};
-
 export function useCdp(): CdpState & CdpActions {
   const { isConnected, publicKey, signDeploy } = useCasperWallet();
 
   // State
-  const [csprVault, setCsprVault] = useState<VaultInfo | null>(DEMO_MODE ? DEMO_CSPR_VAULT : null);
+  const [csprVault, setCsprVault] = useState<VaultInfo | null>(null);
   const [scsprVault, setScsprVault] = useState<VaultInfo | null>(null);
   const [csprBranch, setCsprBranch] = useState<BranchStatus | null>(null);
   const [scsprBranch, setScsprBranch] = useState<BranchStatus | null>(null);
@@ -145,7 +128,7 @@ export function useCdp(): CdpState & CdpActions {
   const [balances, setBalances] = useState<UserBalances>({
     cspr: BigInt(0),
     scspr: BigInt(0),
-    gusd: DEMO_MODE ? BigInt('1000000000000000000') : BigInt(0), // 1 gUSD for demo
+    gusd: BigInt(0),
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -182,22 +165,17 @@ export function useCdp(): CdpState & CdpActions {
             getGusdBalance(publicKey),
           ]);
 
-        // In DEMO_MODE, keep mock vault but update real balances
-        if (!DEMO_MODE) {
-          setCsprVault(csprVaultData);
-          setScsprVault(scsprVaultData);
-        }
+        setCsprVault(csprVaultData);
+        setScsprVault(scsprVaultData);
         setBalances({
           cspr: csprBalance,
           scspr: lstBalance?.scsprBalance ?? BigInt(0),
-          gusd: DEMO_MODE ? BigInt('1000000000000000000') : gusdBalance, // Keep 1 gUSD in demo
+          gusd: gusdBalance,
         });
       } else {
-        if (!DEMO_MODE) {
-          setCsprVault(null);
-          setScsprVault(null);
-        }
-        setBalances({ cspr: BigInt(0), scspr: BigInt(0), gusd: DEMO_MODE ? BigInt('1000000000000000000') : BigInt(0) });
+        setCsprVault(null);
+        setScsprVault(null);
+        setBalances({ cspr: BigInt(0), scspr: BigInt(0), gusd: BigInt(0) });
       }
     } catch (error) {
       console.error('Failed to refresh CDP data:', error);
