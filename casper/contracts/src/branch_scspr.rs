@@ -9,8 +9,8 @@ use crate::interest::{accrue_interest, InterestRateConfig, validate_interest_rat
 
 /// Minimum Collateralization Ratio in basis points (110% = 11000 bps)
 const MCR_BPS: u32 = 11000;
-/// Minimum debt in smallest unit (2000 gUSD)
-const MIN_DEBT_WHOLE: u64 = 2000;
+/// Minimum debt in smallest unit (1 gUSD)
+const MIN_DEBT_WHOLE: u64 = 1;
 /// Price scale (1e18) - prices and debt are in 18 decimals
 const PRICE_SCALE: u64 = 1_000_000_000_000_000_000;
 /// Collateral decimals (stCSPR uses 9 decimals)
