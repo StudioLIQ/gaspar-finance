@@ -109,6 +109,105 @@ function uint8ArrayToHex(bytes: Uint8Array): string {
   return hex;
 }
 
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function encodeU32LE(value: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  const view = new DataView(buf.buffer);
+  view.setUint32(0, value, true);
+  return buf;
+}
+
+function encodeString(value: string): Uint8Array {
+  const bytes = new TextEncoder().encode(value);
+  return concatBytes([encodeU32LE(bytes.length), bytes]);
+}
+
+function encodeBigIntLE(value: bigint): Uint8Array {
+  if (value === 0n) return new Uint8Array([0]);
+  const bytes: number[] = [];
+  let temp = value;
+  while (temp > 0n) {
+    bytes.push(Number(temp & 0xffn));
+    temp >>= 8n;
+  }
+  return new Uint8Array(bytes);
+}
+
+function encodeU256(value: bigint): Uint8Array {
+  const bytes = encodeBigIntLE(value);
+  return concatBytes([new Uint8Array([bytes.length]), bytes]);
+}
+
+function encodeU512(value: bigint): Uint8Array {
+  const bytes = encodeBigIntLE(value);
+  return concatBytes([new Uint8Array([bytes.length]), bytes]);
+}
+
+function encodeClTypeTag(clType: string): Uint8Array {
+  switch (clType) {
+    case 'U8':
+      return new Uint8Array([3]);
+    case 'U32':
+      return new Uint8Array([4]);
+    case 'U256':
+      return new Uint8Array([7]);
+    case 'U512':
+      return new Uint8Array([8]);
+    case 'String':
+      return new Uint8Array([10]);
+    default:
+      throw new Error(`Unsupported CLType for proxy args: ${clType}`);
+  }
+}
+
+function encodeClValue(arg: DeployArg): Uint8Array {
+  switch (arg.clType) {
+    case 'U8': {
+      const n = typeof arg.value === 'string' ? Number(arg.value) : Number(arg.value);
+      const valueBytes = new Uint8Array([n & 0xff]);
+      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
+    }
+    case 'U32': {
+      const n = typeof arg.value === 'string' ? Number(arg.value) : Number(arg.value);
+      const valueBytes = encodeU32LE(n);
+      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
+    }
+    case 'U256': {
+      const valueBytes = encodeU256(BigInt(arg.value as string));
+      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
+    }
+    case 'U512': {
+      const valueBytes = encodeU512(BigInt(arg.value as string));
+      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
+    }
+    case 'String': {
+      const valueBytes = encodeString(String(arg.value));
+      return concatBytes([encodeU32LE(valueBytes.length), valueBytes, encodeClTypeTag(arg.clType)]);
+    }
+    default:
+      throw new Error(`Unsupported CLType for proxy args: ${arg.clType}`);
+  }
+}
+
+function serializeRuntimeArgs(args: DeployArg[]): Uint8Array {
+  const parts: Uint8Array[] = [encodeU32LE(args.length)];
+  for (const arg of args) {
+    parts.push(encodeString(arg.name));
+    parts.push(encodeClValue(arg));
+  }
+  return concatBytes(parts);
+}
+
 /**
  * Check if proxy caller WASM is available
  */
@@ -213,10 +312,14 @@ export function buildProxyCallerDeploy(
   // Normalize contract package hash format (remove known prefixes if present)
   const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
 
+  const runtimeArgsBytes = serializeRuntimeArgs(params.args);
+  const runtimeArgsHex = uint8ArrayToHex(runtimeArgsBytes);
+  const bytesValue = concatBytes([encodeU32LE(runtimeArgsBytes.length), runtimeArgsBytes]);
+
   // Odra proxy_caller expects these session args:
   // - contract_package_hash: AccountHash/ContractPackageHash (32 bytes)
   // - entry_point: String
-  // - args: RuntimeArgs (serialized)
+  // - args: Bytes (serialized RuntimeArgs)
   // - attached_value: U512 (amount to attach)
   return {
     deploy: {
@@ -269,9 +372,9 @@ export function buildProxyCallerDeploy(
             [
               'args',
               {
-                cl_type: 'Any',
-                bytes: '',
-                parsed: params.args.length > 0 ? params.args.map(formatArg) : [],
+                cl_type: 'Bytes',
+                bytes: uint8ArrayToHex(bytesValue),
+                parsed: runtimeArgsHex,
               },
             ],
             [
