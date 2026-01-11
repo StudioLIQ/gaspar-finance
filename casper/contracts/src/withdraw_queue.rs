@@ -113,6 +113,9 @@ pub struct WithdrawQueue {
     config: Var<QueueConfig>,
     /// Queue statistics
     stats: Var<QueueStats>,
+    /// Cached exchange rate (updated externally to avoid cross-contract call issues)
+    /// Scaled by 1e18 (1e18 = 1.0)
+    cached_rate: Var<U256>,
 }
 
 #[odra::module]
@@ -123,6 +126,8 @@ impl WithdrawQueue {
         self.admin.set(admin);
         self.next_request_id.set(1);
         self.stats.set(QueueStats::default());
+        // Initialize cached rate to 1:1 (1e18)
+        self.cached_rate.set(U256::from(SCALE));
 
         self.config.set(QueueConfig {
             unbonding_period: DEFAULT_UNBONDING_PERIOD,
@@ -403,6 +408,26 @@ impl WithdrawQueue {
         self.config.set(config);
     }
 
+    /// Update cached exchange rate (admin only)
+    ///
+    /// This should be called periodically by a keeper to sync the rate
+    /// from the ybToken contract. Avoids cross-contract call issues.
+    ///
+    /// # Arguments
+    /// * `rate` - Exchange rate scaled by 1e18 (e.g., 1.05e18 for 1.05 CSPR/stCSPR)
+    pub fn update_rate(&mut self, rate: U256) {
+        self.require_admin();
+        if rate.is_zero() {
+            self.env().revert(CdpError::InvalidConfig);
+        }
+        self.cached_rate.set(rate);
+    }
+
+    /// Get cached exchange rate
+    pub fn get_cached_rate(&self) -> U256 {
+        self.cached_rate.get().unwrap_or(U256::from(SCALE))
+    }
+
     /// Get admin address
     pub fn get_admin(&self) -> Address {
         self.admin.get().unwrap()
@@ -418,13 +443,14 @@ impl WithdrawQueue {
         }
     }
 
-    /// Get current exchange rate from ybToken via cross-contract call
+    /// Get current exchange rate from cached value
     ///
     /// Returns rate scaled by 1e18 (CSPR_PER_SCSPR)
+    /// Uses cached rate instead of cross-contract call to avoid Casper 2.0 issues
     fn get_current_rate(&self) -> U256 {
-        let ybtoken_address = self.ybtoken.get().unwrap();
-        let call_def = CallDef::new("get_exchange_rate", false, RuntimeArgs::new());
-        self.env().call_contract::<U256>(ybtoken_address, call_def)
+        // Use cached rate (updated externally by keeper/admin)
+        // Falls back to 1:1 rate (1e18) if not set
+        self.cached_rate.get().unwrap_or(U256::from(SCALE))
     }
 
     /// Lock shares from user by transferring to this contract
