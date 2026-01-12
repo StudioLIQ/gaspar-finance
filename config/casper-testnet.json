@@ -3,20 +3,20 @@
   "chainName": "casper-test",
   "nodeAddress": "https://node.testnet.casper.network/rpc",
   "contracts": {
-    "registry": "hash-a5a730f6f09d8d97190cddf1bd685d7bbed927add85d411e6938b7dcb5cf7316",
-    "router": "hash-fd0cd0e5b3aa5b03683d75c73cae4f43e4c704fb75504aa431f5fe12118fdc62",
-    "routerPackage": "contract-package-e4b9bc7f5fba374aa97859567d94d157f5b146e44eb05cdcdfbb9304f3f0e015",
-    "stablecoin": "hash-e5c5b616e066c41c34d0002ef2bd208ac423f9735f3202296bae16a03573614f",
-    "oracleAdapter": "hash-aff2ebdaf2d9f1aa55c7f183f065830004ab1d15477118d5fc863d2308760768",
-    "stabilityPool": "hash-b5ef8f007c8002f9d5b1d1a022d257067878b66d07df8361ac6bd8ea0c7a6f30",
-    "liquidationEngine": "hash-974c365f011581d71178656f069d728f34a1ed62433e5647a6843192af4b330c",
-    "redemptionEngine": "hash-5a22dbabbe00d592b73f1cfac009e2b3675f04274d111e3c82920012557c7db6",
-    "treasury": "hash-518922729dabb3fdf9efea4253cd164bf8e5d0c96f41cc217abe5c38339d0914",
-    "branchCspr": "hash-50cd2bb3b3b6498f0bc74740cc88b13e72951a571616fe26c7c918b97d114f58",
-    "branchSCSPR": "hash-3febfd001fabb822bec3f2b127355ebb4f77ec56e7f4bd02bc8b965aa0217448",
-    "scsprYbToken": "hash-2ba817cdc1b95837b072399a7f6f96119183e1cf7a7f007f1a239b0a81bb8913",
-    "scsprYbTokenPackage": "contract-package-bdac14fdd5bd448d4a68e99fa3f5b918045d025227984767c16b70a19f2f4dad",
-    "withdrawQueue": "hash-74fc4736eeaa6630712b422d0e4ab04f264c3fb39039766f0594c4d5d3122813"
+    "registry": "hash-fbfd8f8b3025ed5bc5d14ba73adead43f1b5c7dfc17d1d5748328f237501b0b8",
+    "router": "hash-c7e3840fa62b8ee23626f63dff8cf14284e15e2508e3e505474c84b02f1b8176",
+    "stablecoin": "hash-717f9a1fccf8c4a1437e5362977d7c7967a0817fafb44ddc2396dfdfce46ec14",
+    "oracleAdapter": "hash-ad21fe9d59d0cf4556ca7ad9d82462ec5de02f832c3b41c8c49db74e9b8e9c72",
+    "stabilityPool": "hash-c66c29d0b92517fb00de868921a39d82082195b013dd90c11c6edd3530ffc59a",
+    "liquidationEngine": "hash-05045eb2678534fcc8bfee4eec9cbcefa8b84232428350e77e92df65e0d25afc",
+    "redemptionEngine": "hash-0d3cb35cb5868b7bd02ca2b9d0acb5b99dbcdeb5579f6e51acbbee13d1f4f68a",
+    "treasury": "hash-3e435d53f0794fa11b8fd58fd3dd71395517dd44eef1fe4389da49bd2a3722cf",
+    "branchCspr": "hash-1df5aee2a69c36cb9f765f71f46eb7998f0679b23b4b0daee54e45dfce123ef8",
+    "branchSCSPR": "hash-1c96861f193d5ae41f6cdfad030f84c4ada579aa7e5e621ca361406d3aca015a",
+    "scsprYbToken": "hash-c1d90b4bad98551bcb01e0ce5261e60a0a0681b8773c6b4b2457096cc2e2aad4",
+    "withdrawQueue": "hash-8ce2cf945cf8d968934a71a7d4d4ea5894fae8270f1ca7db38e8a24348a920dd",
+    "routerPackage": "contract-package-ebb2045dc8202e4e927acf071064378cdabfd557d5ffae874345c9479bce7661",
+    "scsprYbTokenPackage": "contract-package-0b5abe99d4726f88f9d854f61d77f033618919987d43d1b467d9c0cf317d641c"
   },
-  "generatedAt": "2026-01-11T22:49:16Z"
+  "generatedAt": "2026-01-12T00:22:47Z"
 }
