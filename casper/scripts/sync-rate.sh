@@ -95,6 +95,38 @@ echo ""
 STATE_ROOT=$(casper-client get-state-root-hash --node-address "$NODE_ADDRESS" | jq -r '.result.state_root_hash')
 echo "State root: $STATE_ROOT"
 
+# Odra Var field indices (1-indexed, matches contract field order)
+SCSPR_TOTAL_SHARES_IDX=4
+SCSPR_ASSETS_IDX=7
+
+odra_var_key() {
+  local idx="$1"
+  python3 - <<PY
+import hashlib
+i=int("$idx")
+print(hashlib.blake2b(i.to_bytes(4,'big'),digest_size=32).hexdigest())
+PY
+}
+
+odra_var_parsed() {
+  local contract_hash="$1"
+  local idx="$2"
+  local key
+  key="$(odra_var_key "$idx")"
+  local output
+  output=$(casper-client get-dictionary-item \
+    --node-address "$NODE_ADDRESS" \
+    --state-root-hash "$STATE_ROOT" \
+    --contract-hash "$contract_hash" \
+    --dictionary-name state \
+    --dictionary-item-key "$key" 2>/dev/null || true)
+  if [ -z "$output" ]; then
+    echo "null"
+    return
+  fi
+  echo "$output" | jq -c '.result.stored_value.CLValue.parsed // null' 2>/dev/null || echo "null"
+}
+
 # Query current exchange rate from ybToken
 echo ""
 echo "=== Step 1: Query ybToken Exchange Rate ==="
@@ -103,91 +135,63 @@ if [ -n "${OVERRIDE_YBTOKEN_RATE:-}" ]; then
     YBTOKEN_RATE="$OVERRIDE_YBTOKEN_RATE"
     echo "Using OVERRIDE_YBTOKEN_RATE: $YBTOKEN_RATE"
 else
-    YBTOKEN_STATE=$(casper-client query-global-state \
-      --node-address "$NODE_ADDRESS" \
-      --state-root-hash "$STATE_ROOT" \
-      --key "$YBTOKEN_HASH" 2>/dev/null || echo '{}')
+    ASSETS_PARSED=$(odra_var_parsed "$YBTOKEN_HASH" "$SCSPR_ASSETS_IDX")
+    TOTAL_SHARES_PARSED=$(odra_var_parsed "$YBTOKEN_HASH" "$SCSPR_TOTAL_SHARES_IDX")
 
-    if ! echo "$YBTOKEN_STATE" | jq -e '.result.stored_value.Contract.named_keys' > /dev/null 2>&1; then
-        echo "ERROR: Could not read ybToken named_keys from global state."
+    if [ -z "$ASSETS_PARSED" ] || [ "$ASSETS_PARSED" = "null" ] || [ -z "$TOTAL_SHARES_PARSED" ] || [ "$TOTAL_SHARES_PARSED" = "null" ]; then
+        echo "ERROR: Could not read ybToken assets/total_shares from Odra state dictionary."
         echo "Set OVERRIDE_YBTOKEN_RATE=<u256_scaled_by_1e18> to proceed."
         exit 1
     fi
 
-    ASSETS_KEY=$(echo "$YBTOKEN_STATE" | jq -r '.result.stored_value.Contract.named_keys[] | select(.name == "assets") | .key' | head -1)
-    TOTAL_SHARES_KEY=$(echo "$YBTOKEN_STATE" | jq -r '.result.stored_value.Contract.named_keys[] | select(.name == "total_shares") | .key' | head -1)
-
-    if [ -z "$ASSETS_KEY" ] || [ "$ASSETS_KEY" = "null" ] || [ -z "$TOTAL_SHARES_KEY" ] || [ "$TOTAL_SHARES_KEY" = "null" ]; then
-        echo "ERROR: Could not find required ybToken keys (assets, total_shares)."
-        echo "Set OVERRIDE_YBTOKEN_RATE=<u256_scaled_by_1e18> to proceed."
-        exit 1
-    fi
-
-    ASSETS_VALUE=$(casper-client query-global-state \
-      --node-address "$NODE_ADDRESS" \
-      --state-root-hash "$STATE_ROOT" \
-      --key "$ASSETS_KEY" 2>/dev/null || echo '{}')
-
-    TOTAL_SHARES_VALUE=$(casper-client query-global-state \
-      --node-address "$NODE_ADDRESS" \
-      --state-root-hash "$STATE_ROOT" \
-      --key "$TOTAL_SHARES_KEY" 2>/dev/null || echo '{}')
-
-    # Odra Var<T> is stored as a CLValue. We expect:
-    # - assets: parsed object with fields idle_cspr/delegated_cspr/undelegating_cspr/claimable_cspr/protocol_fees/realized_losses
-    # - total_shares: parsed U256 (string or number)
-    YBTOKEN_RATE=$(printf '%s\n%s\n' "$ASSETS_VALUE" "$TOTAL_SHARES_VALUE" | python3 - << 'PY'
+    YBTOKEN_RATE=$(python3 - "$ASSETS_PARSED" "$TOTAL_SHARES_PARSED" << 'PY'
 import json, sys
 
 SCALE = 10**18
 
-assets_json = json.loads(sys.stdin.readline())
-shares_json = json.loads(sys.stdin.readline())
+assets = json.loads(sys.argv[1] or "null")
+shares = json.loads(sys.argv[2] or "null")
 
-def parsed(obj):
-    return (((obj.get("result") or {}).get("stored_value") or {}).get("CLValue") or {}).get("parsed")
+def parse_u256_clvalue(data):
+    if not isinstance(data, list) or len(data) == 0:
+        return 0
+    length = data[0]
+    val = 0
+    for i in range(length):
+        if 1 + i < len(data):
+            val += data[1 + i] << (8 * i)
+    return val
 
-assets = parsed(assets_json)
-total_shares = parsed(shares_json)
+def parse_asset_breakdown(data):
+    if not isinstance(data, list):
+        return [0, 0, 0, 0, 0, 0]
+    vals = []
+    i = 0
+    for _ in range(6):
+        if i >= len(data):
+            vals.append(0)
+            continue
+        length = data[i]
+        i += 1
+        val = 0
+        for j in range(length):
+            if i + j < len(data):
+                val += data[i + j] << (8 * j)
+        i += length
+        vals.append(val)
+    return vals
 
-if assets is None or total_shares in (None, ""):
-    raise SystemExit("missing parsed fields")
-
-def u256(x):
-    if isinstance(x, int):
-        return x
-    if isinstance(x, str):
-        return int(x)
-    raise SystemExit(f"unexpected u256 type: {type(x)}")
-
-total_shares_i = u256(total_shares)
-if total_shares_i == 0:
+total_shares = parse_u256_clvalue(shares)
+if total_shares == 0:
     print(SCALE)
     sys.exit(0)
 
-required_fields = [
-    "idle_cspr",
-    "delegated_cspr",
-    "undelegating_cspr",
-    "claimable_cspr",
-    "protocol_fees",
-    "realized_losses",
-]
-if not isinstance(assets, dict) or any(f not in assets for f in required_fields):
-    raise SystemExit("unexpected assets shape")
-
-idle = u256(assets["idle_cspr"])
-delegated = u256(assets["delegated_cspr"])
-undelegating = u256(assets["undelegating_cspr"])
-claimable = u256(assets["claimable_cspr"])
-fees = u256(assets["protocol_fees"])
-losses = u256(assets["realized_losses"])
-
+idle, delegated, undelegating, claimable, fees, losses = parse_asset_breakdown(assets)
 gross = idle + delegated + undelegating + claimable
 deductions = fees + losses
 total_assets = gross - deductions if gross > deductions else 0
 
-rate = (total_assets * SCALE) // total_shares_i
+rate = (total_assets * SCALE) // total_shares
 print(rate)
 PY
     )

@@ -29,6 +29,7 @@ require_cmd() {
 
 require_cmd jq
 require_cmd casper-client
+require_cmd python3
 
 if [ -z "$DEPLOY_FILE" ]; then
   DEPLOY_FILE=$(ls -t "$DEPLOY_DIR/${NETWORK}-"*.json 2>/dev/null | head -n1 || true)
@@ -69,6 +70,127 @@ echo ""
 STATE_ROOT=$(casper-client get-state-root-hash --node-address "$NODE_ADDRESS" | jq -r '.result.state_root_hash')
 echo "State root: $STATE_ROOT"
 echo ""
+
+# Odra Var field indices (1-indexed, matches contract field order)
+SCSPR_TOTAL_SHARES_IDX=4
+SCSPR_ASSETS_IDX=7
+SCSPR_LAST_SYNC_IDX=8
+QUEUE_NEXT_REQUEST_ID_IDX=3
+QUEUE_CONFIG_IDX=7
+QUEUE_STATS_IDX=8
+
+odra_var_key() {
+  local idx="$1"
+  python3 - <<PY
+import hashlib
+i=int("$idx")
+print(hashlib.blake2b(i.to_bytes(4,'big'),digest_size=32).hexdigest())
+PY
+}
+
+odra_var_parsed() {
+  local contract_hash="$1"
+  local idx="$2"
+  local key
+  key="$(odra_var_key "$idx")"
+  local output
+  output=$(casper-client get-dictionary-item \
+    --node-address "$NODE_ADDRESS" \
+    --state-root-hash "$STATE_ROOT" \
+    --contract-hash "$contract_hash" \
+    --dictionary-name state \
+    --dictionary-item-key "$key" 2>/dev/null || true)
+  if [ -z "$output" ]; then
+    echo "null"
+    return
+  fi
+  echo "$output" | jq -c '.result.stored_value.CLValue.parsed // null' 2>/dev/null || echo "null"
+}
+
+print_odra_u256() {
+  local label="$1"
+  local parsed_json="$2"
+  python3 - "$label" "$parsed_json" <<'PY'
+import json, sys
+label=sys.argv[1]
+data=json.loads(sys.argv[2] or "null")
+if not isinstance(data, list):
+    print(f"- {label}: (missing)")
+    sys.exit(0)
+if len(data)==0:
+    print(f"- {label}: 0")
+    sys.exit(0)
+length=data[0]
+val=0
+for i in range(length):
+    if 1+i < len(data):
+        val += data[1+i] << (8*i)
+print(f"- {label}: {val}")
+PY
+}
+
+print_odra_u64() {
+  local label="$1"
+  local parsed_json="$2"
+  python3 - "$label" "$parsed_json" <<'PY'
+import json, sys
+label=sys.argv[1]
+data=json.loads(sys.argv[2] or "null")
+if not isinstance(data, list) or len(data) < 8:
+    print(f"- {label}: (missing)")
+    sys.exit(0)
+val=0
+for i in range(8):
+    val += data[i] << (8*i)
+print(f"- {label}: {val}")
+PY
+}
+
+print_asset_breakdown() {
+  local label="$1"
+  local parsed_json="$2"
+  python3 - "$label" "$parsed_json" <<'PY'
+import json, sys
+label=sys.argv[1]
+data=json.loads(sys.argv[2] or "null")
+if not isinstance(data, list):
+    print(f"- {label}: (missing)")
+    sys.exit(0)
+vals=[]
+i=0
+for _ in range(6):
+    if i >= len(data):
+        vals.append(0)
+        continue
+    length=data[i]
+    i+=1
+    val=0
+    for j in range(length):
+        if i+j < len(data):
+            val += data[i+j] << (8*j)
+    i+=length
+    vals.append(val)
+idle, delegated, undelegating, claimable, protocol_fees, realized_losses = vals
+print(f"- {label}: {{idle_cspr:{idle}, delegated_cspr:{delegated}, undelegating_cspr:{undelegating}, claimable_cspr:{claimable}, protocol_fees:{protocol_fees}, realized_losses:{realized_losses}}}")
+PY
+}
+
+print_queue_config() {
+  local label="$1"
+  local parsed_json="$2"
+  python3 - "$label" "$parsed_json" <<'PY'
+import json, sys
+label=sys.argv[1]
+data=json.loads(sys.argv[2] or "null")
+if not isinstance(data, list) or len(data) < 8:
+    print(f"- {label}: (missing)")
+    sys.exit(0)
+unbonding=0
+for i in range(8):
+    unbonding += data[i] << (8*i)
+print(f"- {label}.unbonding_period: {unbonding}")
+PY
+}
 
 dump_named_keys() {
   local label="$1"
@@ -112,20 +234,24 @@ read_var_by_name() {
 }
 
 dump_named_keys "ybToken" "$YBTOKEN_HASH"
-read_var_by_name "ybToken" "$YBTOKEN_HASH" "assets"
-read_var_by_name "ybToken" "$YBTOKEN_HASH" "total_shares"
-read_var_by_name "ybToken" "$YBTOKEN_HASH" "last_sync_timestamp"
+YB_ASSETS_PARSED=$(odra_var_parsed "$YBTOKEN_HASH" "$SCSPR_ASSETS_IDX")
+YB_TOTAL_SHARES_PARSED=$(odra_var_parsed "$YBTOKEN_HASH" "$SCSPR_TOTAL_SHARES_IDX")
+YB_LAST_SYNC_PARSED=$(odra_var_parsed "$YBTOKEN_HASH" "$SCSPR_LAST_SYNC_IDX")
+print_asset_breakdown "ybToken.assets" "$YB_ASSETS_PARSED"
+print_odra_u256 "ybToken.total_shares" "$YB_TOTAL_SHARES_PARSED"
+print_odra_u64 "ybToken.last_sync_timestamp" "$YB_LAST_SYNC_PARSED"
 echo ""
 
 dump_named_keys "WithdrawQueue" "$QUEUE_HASH"
-read_var_by_name "WithdrawQueue" "$QUEUE_HASH" "config"
-read_var_by_name "WithdrawQueue" "$QUEUE_HASH" "next_request_id"
-read_var_by_name "WithdrawQueue" "$QUEUE_HASH" "stats"
+WQ_CONFIG_PARSED=$(odra_var_parsed "$QUEUE_HASH" "$QUEUE_CONFIG_IDX")
+WQ_NEXT_PARSED=$(odra_var_parsed "$QUEUE_HASH" "$QUEUE_NEXT_REQUEST_ID_IDX")
+WQ_STATS_PARSED=$(odra_var_parsed "$QUEUE_HASH" "$QUEUE_STATS_IDX")
+print_queue_config "WithdrawQueue.config" "$WQ_CONFIG_PARSED"
+print_odra_u64 "WithdrawQueue.next_request_id" "$WQ_NEXT_PARSED"
+echo "- WithdrawQueue.stats: $WQ_STATS_PARSED"
 echo ""
 
 echo "=== Notes ==="
-echo "- Frontend expects ybToken Var keys: assets, total_shares (used to compute total_assets + exchange rate)."
-echo "- Frontend expects WithdrawQueue Var key: config (unbonding_period)."
-echo "- If these are missing or shapes differ, adjust FE parsing in frontend/lib/casperRpc.ts."
+echo "- Odra stores Var<T> in a single dictionary named 'state' (hashed keys). Named keys may not include fields."
+echo "- Frontend reads ybToken/WithdrawQueue via Odra dictionary queries in frontend/lib/casperRpc.ts."
 echo ""
-

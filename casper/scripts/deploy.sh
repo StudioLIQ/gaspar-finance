@@ -74,9 +74,15 @@ require_cmd make
 require_cmd casper-client
 require_cmd jq
 
+# Transaction config (Casper 2.x uses put-transaction)
+PRICING_MODE="${PRICING_MODE:-classic}"
+GAS_PRICE_TOL="${GAS_PRICE_TOL:-10}"
+TTL="${TTL:-30min}"
+
 PAYMENT_AMOUNT="${PAYMENT_AMOUNT:-}"
-INSTALL_PAYMENT_AMOUNT="${INSTALL_PAYMENT_AMOUNT:-${PAYMENT_AMOUNT:-20000000000}}" # 20 CSPR default
-CALL_PAYMENT_AMOUNT="${CALL_PAYMENT_AMOUNT:-${PAYMENT_AMOUNT:-3000000000}}" # 3 CSPR default
+# Defaults tuned for Casper Testnet contract installs (higher than legacy deploy defaults)
+INSTALL_PAYMENT_AMOUNT="${INSTALL_PAYMENT_AMOUNT:-${PAYMENT_AMOUNT:-800000000000}}" # 800 CSPR default
+CALL_PAYMENT_AMOUNT="${CALL_PAYMENT_AMOUNT:-${PAYMENT_AMOUNT:-20000000000}}" # 20 CSPR default
 
 # Required network values
 : "${CSPR_DECIMALS:?Set CSPR_DECIMALS (confirmed value)}"
@@ -85,8 +91,14 @@ CALL_PAYMENT_AMOUNT="${CALL_PAYMENT_AMOUNT:-${PAYMENT_AMOUNT:-3000000000}}" # 3 
 # LST deployment flag (set to "true" to deploy ybToken and WithdrawQueue)
 DEPLOY_LST="${DEPLOY_LST:-true}"
 # If true, auto-use the deployed ybToken as the stCSPR token + LST contract.
-# This allows fully-local testnet deployments without pre-existing stCSPR contracts.
+# This allows testnet deployments without pre-existing stCSPR contracts.
 USE_DEPLOYED_LST_AS_SCSPR="${USE_DEPLOYED_LST_AS_SCSPR:-false}"
+
+# Auto-enable internal LST usage when external hashes are missing
+if [ -z "${SCSPR_TOKEN_HASH:-}" ] && [ -z "${SCSPR_LST_HASH:-}" ] && [ "$DEPLOY_LST" = "true" ] && [ "${USE_DEPLOYED_LST_AS_SCSPR:-}" != "true" ]; then
+  USE_DEPLOYED_LST_AS_SCSPR="true"
+  echo "Note: SCSPR_TOKEN_HASH/SCSPR_LST_HASH not set. Using deployed LST as stCSPR (USE_DEPLOYED_LST_AS_SCSPR=true)."
+fi
 
 if [ "$USE_DEPLOYED_LST_AS_SCSPR" = "true" ] && [ "$DEPLOY_LST" != "true" ]; then
   echo "ERROR: USE_DEPLOYED_LST_AS_SCSPR=true requires DEPLOY_LST=true"
@@ -185,15 +197,15 @@ cat > "$DEPLOY_RECORD" << EOF
 }
 EOF
 
-wait_for_deploy() {
+wait_for_txn() {
   local deploy_hash="$1"
   local attempts=0
-  local max_attempts=40
+  local max_attempts=120
   local sleep_secs=5
 
   while [ $attempts -lt $max_attempts ]; do
     local result
-    result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash" 2>/dev/null || true)
+    result=$(casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash" 2>/dev/null || echo "{}")
     local result_json
     result_json=$(json_only "$result")
     if [ -z "$result_json" ]; then
@@ -202,51 +214,59 @@ wait_for_deploy() {
       continue
     fi
 
-    local success
-    success=$(echo "$result_json" | jq -r '.result.execution_results[0].result.Success // empty')
-    if [ -n "$success" ]; then
+    local has_exec
+    has_exec=$(echo "$result_json" | jq -r '.result.execution_info.execution_result != null')
+    if [ "$has_exec" = "true" ]; then
+      local error_message
+      error_message=$(echo "$result_json" | jq -r '.result.execution_info.execution_result.Version2.error_message // .result.execution_info.execution_result.Version1.error_message // empty')
+      if [ -n "$error_message" ] && [ "$error_message" != "null" ]; then
+        echo "ERROR: transaction failed: $error_message"
+        exit 1
+      fi
       return 0
-    fi
-
-    local failure
-    failure=$(echo "$result_json" | jq -r '.result.execution_results[0].result.Failure // empty')
-    if [ -n "$failure" ]; then
-      echo "ERROR: deploy failed: $deploy_hash"
-      echo "$result_json" | jq '.result.execution_results[0].result.Failure'
-      exit 1
     fi
 
     attempts=$((attempts + 1))
     sleep "$sleep_secs"
   done
 
-  echo "ERROR: deploy not finalized after $max_attempts attempts: $deploy_hash"
+  echo "ERROR: transaction not finalized after $max_attempts attempts: $deploy_hash"
   exit 1
 }
 
 extract_contract_hash() {
   local deploy_hash="$1"
   local result
-  result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
+  result=$(casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash")
   result=$(json_only "$result")
 
-  # Try Casper 1.x format first (WriteContract)
   local hash
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContract != null) | .key' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '(
+      .result.execution_info.execution_result.Version2.effects
+      // .result.execution_info.execution_result.Version1.effects
+      // []
+    )[] | select((.kind | type) == "object" and .kind.Write.Contract != null) | .key' 2>/dev/null | head -n 1)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
   fi
 
-  # Try Casper 2.0 format (AddressableEntity)
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteAddressableEntity != null) | .key' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '(
+      .result.execution_info.execution_result.Version2.effects
+      // .result.execution_info.execution_result.Version1.effects
+      // []
+    )[] | select((.kind | type) == "object" and .kind.Write != null and (.key | startswith("addressable-entity-"))) | .key' 2>/dev/null | head -n 1)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
   fi
 
-  # Try looking for entity-contract or hash- keys in transforms
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | .key | select(startswith("entity-contract-") or (startswith("hash-") and (. | test("^hash-[a-f0-9]{64}$"))))' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '[
+      (.result.execution_info.execution_result.Version2.effects
+       // .result.execution_info.execution_result.Version1.effects
+       // [])[] | .key
+       | select(type == "string" and (startswith("hash-") or startswith("entity-contract-") or startswith("addressable-entity-")))
+    ] | unique | .[0]' 2>/dev/null)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
@@ -258,26 +278,37 @@ extract_contract_hash() {
 extract_package_hash() {
   local deploy_hash="$1"
   local result
-  result=$(casper-client get-deploy --node-address "$NODE_ADDRESS" "$deploy_hash")
+  result=$(casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash")
   result=$(json_only "$result")
 
-  # Try Casper 1.x format first (WriteContractPackage)
   local hash
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WriteContractPackage != null) | .key' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '(
+      .result.execution_info.execution_result.Version2.effects
+      // .result.execution_info.execution_result.Version1.effects
+      // []
+    )[] | select((.kind | type) == "object" and .kind.Write.Contract != null)
+     | .kind.Write.Contract.contract_package_hash' 2>/dev/null | head -n 1)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
   fi
 
-  # Try Casper 2.0 format (Package)
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | select(.transform.WritePackage != null) | .key' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '(
+      .result.execution_info.execution_result.Version2.effects
+      // .result.execution_info.execution_result.Version1.effects
+      // []
+    )[] | select((.kind | type) == "object" and .kind.Write.ContractPackage != null) | .key' 2>/dev/null | head -n 1)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
   fi
 
-  # Try looking for contract-package- or package- keys
-  hash=$(echo "$result" | jq -r '.result.execution_results[0].result.Success.effect.transforms[] | .key | select(startswith("contract-package-") or startswith("package-"))' 2>/dev/null | head -n 1)
+  hash=$(echo "$result" | jq -r '[
+      (.result.execution_info.execution_result.Version2.effects
+       // .result.execution_info.execution_result.Version1.effects
+       // [])[] | .key
+       | select(type == "string" and (startswith("contract-package-") or startswith("package-")))
+    ] | unique | .[0]' 2>/dev/null)
   if [ -n "$hash" ] && [ "$hash" != "null" ]; then
     echo "$hash"
     return
@@ -289,11 +320,18 @@ extract_package_hash() {
 # Lookup package_hash from contract_hash via RPC query
 lookup_package_hash_from_contract() {
   local contract_hash="$1"
+  local state_root
+  state_root=$(casper-client get-state-root-hash --node-address "$NODE_ADDRESS" 2>/dev/null | jq -r '.result.state_root_hash // empty')
+  if [ -z "$state_root" ]; then
+    echo ""
+    return
+  fi
+
   local result
   result=$(casper-client query-global-state \
     --node-address "$NODE_ADDRESS" \
-    --key "$contract_hash" \
-    --state-root-hash "" 2>/dev/null || true)
+    --state-root-hash "$state_root" \
+    --key "$contract_hash" 2>/dev/null || true)
   result=$(json_only "$result")
 
   if [ -z "$result" ]; then
@@ -301,7 +339,6 @@ lookup_package_hash_from_contract() {
     return
   fi
 
-  # Extract contract_package_hash from Contract stored value
   local pkg_hash
   pkg_hash=$(echo "$result" | jq -r '.result.stored_value.Contract.contract_package_hash // .result.stored_value.AddressableEntity.package_hash // empty' 2>/dev/null)
   if [ -n "$pkg_hash" ] && [ "$pkg_hash" != "null" ]; then
@@ -352,16 +389,27 @@ install_contract() {
   echo ""
   echo "--- Installing $name ---" >&2
 
-  local deploy_hash
+  local cmd=(
+    casper-client put-transaction session
+    --node-address "$NODE_ADDRESS"
+    --chain-name "$CHAIN_NAME"
+    --secret-key "$SECRET_KEY"
+    --wasm-path "$WASM_FILE"
+    --session-entry-point "$entrypoint"
+    --pricing-mode "$PRICING_MODE"
+    --gas-price-tolerance "$GAS_PRICE_TOL"
+    --payment-amount "$INSTALL_PAYMENT_AMOUNT"
+    --standard-payment true
+    --install-upgrade
+    --ttl "$TTL"
+  )
+
+  for arg in "${args[@]}"; do
+    cmd+=("$arg")
+  done
+
   local output
-  output=$(casper-client put-deploy \
-    --node-address "$NODE_ADDRESS" \
-    --chain-name "$CHAIN_NAME" \
-    --secret-key "$SECRET_KEY" \
-    --session-path "$WASM_FILE" \
-    --session-entry-point "$entrypoint" \
-    --payment-amount "$INSTALL_PAYMENT_AMOUNT" \
-    "${args[@]}" 2>&1)
+  output=$("${cmd[@]}" 2>&1)
   local output_json
   output_json=$(json_only "$output")
   if [ -z "$output_json" ]; then
@@ -369,7 +417,9 @@ install_contract() {
     echo "$output" >&2
     exit 1
   fi
-  deploy_hash=$(echo "$output_json" | jq -r '.result.deploy_hash // .result.transaction_hash.Version1 // .result.transaction_hash // empty')
+
+  local deploy_hash
+  deploy_hash=$(echo "$output_json" | jq -r '.result.transaction_hash.Version1 // .result.transaction_hash // .result.deploy_hash // empty')
   if [ -z "$deploy_hash" ]; then
     echo "ERROR: failed to get deploy hash for $name" >&2
     echo "$output_json" >&2
@@ -377,7 +427,7 @@ install_contract() {
   fi
 
   echo "Deploy hash: $deploy_hash" >&2
-  wait_for_deploy "$deploy_hash"
+  wait_for_txn "$deploy_hash"
 
   local contract_hash
   local package_hash
@@ -389,7 +439,6 @@ install_contract() {
     exit 1
   fi
 
-  # Fallback: if package_hash not found in deploy transforms, query contract directly
   if [ -z "$package_hash" ] || [ "$package_hash" = "null" ]; then
     echo "  (package_hash not in transforms, querying contract...)" >&2
     package_hash=$(lookup_package_hash_from_contract "$contract_hash")
@@ -414,16 +463,42 @@ call_contract() {
   shift 2
   local args=("$@")
 
-  local deploy_hash
+  local cmd=(
+    casper-client put-transaction invocable-entity
+    --node-address "$NODE_ADDRESS"
+    --chain-name "$CHAIN_NAME"
+    --secret-key "$SECRET_KEY"
+    --contract-hash "$contract_hash"
+    --session-entry-point "$entrypoint"
+    --pricing-mode "$PRICING_MODE"
+    --gas-price-tolerance "$GAS_PRICE_TOL"
+    --payment-amount "$CALL_PAYMENT_AMOUNT"
+    --standard-payment true
+    --ttl "$TTL"
+  )
+
+  if [[ "$contract_hash" == addressable-entity-* ]] || [[ "$contract_hash" == entity-contract-* ]]; then
+    cmd=(
+      casper-client put-transaction invocable-entity
+      --node-address "$NODE_ADDRESS"
+      --chain-name "$CHAIN_NAME"
+      --secret-key "$SECRET_KEY"
+      --entity-address "$contract_hash"
+      --session-entry-point "$entrypoint"
+      --pricing-mode "$PRICING_MODE"
+      --gas-price-tolerance "$GAS_PRICE_TOL"
+      --payment-amount "$CALL_PAYMENT_AMOUNT"
+      --standard-payment true
+      --ttl "$TTL"
+    )
+  fi
+
+  for arg in "${args[@]}"; do
+    cmd+=("$arg")
+  done
+
   local output
-  output=$(casper-client put-deploy \
-    --node-address "$NODE_ADDRESS" \
-    --chain-name "$CHAIN_NAME" \
-    --secret-key "$SECRET_KEY" \
-    --session-hash "$contract_hash" \
-    --session-entry-point "$entrypoint" \
-    --payment-amount "$CALL_PAYMENT_AMOUNT" \
-    "${args[@]}" 2>&1)
+  output=$("${cmd[@]}" 2>&1)
   local output_json
   output_json=$(json_only "$output")
   if [ -z "$output_json" ]; then
@@ -431,7 +506,9 @@ call_contract() {
     echo "$output" >&2
     exit 1
   fi
-  deploy_hash=$(echo "$output_json" | jq -r '.result.deploy_hash // .result.transaction_hash.Version1 // .result.transaction_hash // empty')
+
+  local deploy_hash
+  deploy_hash=$(echo "$output_json" | jq -r '.result.transaction_hash.Version1 // .result.transaction_hash // .result.deploy_hash // empty')
   if [ -z "$deploy_hash" ]; then
     echo "ERROR: failed to get deploy hash for call $entrypoint" >&2
     echo "$output_json" >&2
@@ -439,7 +516,7 @@ call_contract() {
   fi
 
   echo "Deploy hash: $deploy_hash" >&2
-  wait_for_deploy "$deploy_hash"
+  wait_for_txn "$deploy_hash"
 }
 
 # Entrypoint overrides (if needed)
