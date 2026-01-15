@@ -57,6 +57,8 @@ TOKEN_ADAPTER_HASH=$(get_hash '.contracts.tokenAdapter.hash')
 SCSPR_ADAPTER_HASH=$(get_hash '.contracts.scsprAdapter.hash')
 ACCESS_CONTROL_HASH=$(get_hash '.contracts.accessControl.hash')
 GOVERNANCE_HASH=$(get_hash '.contracts.governance.hash')
+SCSPR_YBTOKEN_HASH=$(get_hash '.contracts.scsprYbToken.hash')
+WITHDRAW_QUEUE_HASH=$(get_hash '.contracts.withdrawQueue.hash')
 
 REGISTRY_PKG=$(get_hash '.contracts.registry.package_hash')
 ROUTER_PKG=$(get_hash '.contracts.router.package_hash')
@@ -72,6 +74,8 @@ TOKEN_ADAPTER_PKG=$(get_hash '.contracts.tokenAdapter.package_hash')
 SCSPR_ADAPTER_PKG=$(get_hash '.contracts.scsprAdapter.package_hash')
 ACCESS_CONTROL_PKG=$(get_hash '.contracts.accessControl.package_hash')
 GOVERNANCE_PKG=$(get_hash '.contracts.governance.package_hash')
+SCSPR_YBTOKEN_PKG=$(get_hash '.contracts.scsprYbToken.package_hash')
+WITHDRAW_QUEUE_PKG=$(get_hash '.contracts.withdrawQueue.package_hash')
 
 SECTION=$(cat <<SEC
 ## $NETWORK_TITLE
@@ -96,6 +100,8 @@ SECTION=$(cat <<SEC
 | SCSPRAdapter | $SCSPR_ADAPTER_HASH | $SCSPR_ADAPTER_PKG | |
 | AccessControl | $ACCESS_CONTROL_HASH | $ACCESS_CONTROL_PKG | |
 | Governance | $GOVERNANCE_HASH | $GOVERNANCE_PKG | |
+| ScsprYbToken | $SCSPR_YBTOKEN_HASH | $SCSPR_YBTOKEN_PKG | |
+| WithdrawQueue | $WITHDRAW_QUEUE_HASH | $WITHDRAW_QUEUE_PKG | |
 SEC
 )
 

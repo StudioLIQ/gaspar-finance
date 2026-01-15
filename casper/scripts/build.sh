@@ -31,10 +31,10 @@ echo "=== Building Contracts ==="
 cd "$CONTRACTS_DIR"
 
 if [ "$BUILD_MODE" = "--release" ]; then
-    cargo build --release --target wasm32-unknown-unknown
+    cargo build --release --target wasm32-unknown-unknown --lib
     WASM_DIR="$ROOT_DIR/target/wasm32-unknown-unknown/release"
 else
-    cargo build --target wasm32-unknown-unknown
+    cargo build --target wasm32-unknown-unknown --lib
     WASM_DIR="$ROOT_DIR/target/wasm32-unknown-unknown/debug"
 fi
 

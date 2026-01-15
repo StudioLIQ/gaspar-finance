@@ -4,12 +4,21 @@
 //! Only authorized protocol contracts (branches, redemption engine) can mint/burn.
 
 use odra::prelude::*;
-use odra::casper_types::{U256, RuntimeArgs, runtime_args};
+use odra::casper_types::{U256, RuntimeArgs, runtime_args, Key};
+use odra::casper_types::bytesrepr::ToBytes;
 use odra::CallDef;
 use crate::errors::CdpError;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 
 /// Total supply cap (optional, 0 = unlimited)
 const DEFAULT_SUPPLY_CAP: u64 = 0;
+const CEP18_NAME_KEY: &str = "name";
+const CEP18_SYMBOL_KEY: &str = "symbol";
+const CEP18_DECIMALS_KEY: &str = "decimals";
+const CEP18_TOTAL_SUPPLY_KEY: &str = "total_supply";
+const CEP18_BALANCES_DICT: &str = "balances";
+const CEP18_ALLOWANCES_DICT: &str = "allowances";
 
 /// gUSD Stablecoin Contract
 #[odra::module]
@@ -44,6 +53,12 @@ impl CsprUsd {
         self.total_supply.set(U256::zero());
         self.registry.set(registry);
         self.supply_cap.set(U256::from(DEFAULT_SUPPLY_CAP));
+        self.env().init_dictionary(CEP18_BALANCES_DICT);
+        self.env().init_dictionary(CEP18_ALLOWANCES_DICT);
+        self.env().set_named_value(CEP18_NAME_KEY, String::from("gUSD"));
+        self.env().set_named_value(CEP18_SYMBOL_KEY, String::from("gUSD"));
+        self.env().set_named_value(CEP18_DECIMALS_KEY, 18u8);
+        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, U256::zero());
     }
 
     // ========== CEP-18 Standard Functions ==========
@@ -123,9 +138,12 @@ impl CsprUsd {
 
         let current_balance = self.balance_of(to);
         self.balances.set(&to, current_balance + amount);
+        self.set_balance_cep18(to, current_balance + amount);
 
         let current_supply = self.total_supply();
-        self.total_supply.set(current_supply + amount);
+        let new_supply = current_supply + amount;
+        self.total_supply.set(new_supply);
+        self.set_total_supply_cep18(new_supply);
     }
 
     /// Burn tokens from caller
@@ -213,14 +231,19 @@ impl CsprUsd {
             self.env().revert(CdpError::InsufficientTokenBalance);
         }
 
-        self.balances.set(&from, from_balance - amount);
+        let new_from_balance = from_balance - amount;
+        self.balances.set(&from, new_from_balance);
+        self.set_balance_cep18(from, new_from_balance);
 
         let to_balance = self.balance_of(to);
-        self.balances.set(&to, to_balance + amount);
+        let new_to_balance = to_balance + amount;
+        self.balances.set(&to, new_to_balance);
+        self.set_balance_cep18(to, new_to_balance);
     }
 
     fn approve_internal(&mut self, owner: Address, spender: Address, amount: U256) {
         self.allowances.set(&(owner, spender), amount);
+        self.set_allowance_cep18(owner, spender, amount);
     }
 
     fn burn_from_internal(&mut self, from: Address, amount: U256) {
@@ -229,10 +252,43 @@ impl CsprUsd {
             self.env().revert(CdpError::InsufficientTokenBalance);
         }
 
-        self.balances.set(&from, current_balance - amount);
+        let new_balance = current_balance - amount;
+        self.balances.set(&from, new_balance);
+        self.set_balance_cep18(from, new_balance);
 
         let current_supply = self.total_supply();
-        self.total_supply.set(current_supply - amount);
+        let new_supply = current_supply - amount;
+        self.total_supply.set(new_supply);
+        self.set_total_supply_cep18(new_supply);
+    }
+
+    fn set_balance_cep18(&self, owner: Address, amount: U256) {
+        let key = Self::cep18_balance_key(owner);
+        self.env().set_dictionary_value(CEP18_BALANCES_DICT, key.as_bytes(), amount);
+    }
+
+    fn set_allowance_cep18(&self, owner: Address, spender: Address, amount: U256) {
+        let key = Self::cep18_allowance_key(owner, spender);
+        self.env().set_dictionary_value(CEP18_ALLOWANCES_DICT, key.as_bytes(), amount);
+    }
+
+    fn set_total_supply_cep18(&self, amount: U256) {
+        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, amount);
+    }
+
+    fn cep18_balance_key(owner: Address) -> String {
+        let key = Key::from(owner);
+        let bytes = key.to_bytes().unwrap_or_default();
+        BASE64_STANDARD.encode(bytes)
+    }
+
+    fn cep18_allowance_key(owner: Address, spender: Address) -> String {
+        let owner_key = Key::from(owner);
+        let spender_key = Key::from(spender);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&owner_key.to_bytes().unwrap_or_default());
+        bytes.extend_from_slice(&spender_key.to_bytes().unwrap_or_default());
+        BASE64_STANDARD.encode(bytes)
     }
 
     fn require_authorized_minter(&self) {

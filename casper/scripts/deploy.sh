@@ -74,6 +74,79 @@ require_cmd make
 require_cmd casper-client
 require_cmd jq
 
+resolve_wasm_path() {
+  local name="$1"
+  case "$name" in
+    registry) echo "$WASM_DIR/Registry.wasm" ;;
+    router) echo "$WASM_DIR/Router.wasm" ;;
+    accessControl) echo "$WASM_DIR/AccessControl.wasm" ;;
+    stablecoin)
+      if [ -f "$WASM_DIR/CsprUsd.wasm" ]; then
+        echo "$WASM_DIR/CsprUsd.wasm"
+      else
+        echo "$WASM_DIR/Stablecoin.wasm"
+      fi
+      ;;
+    treasury) echo "$WASM_DIR/Treasury.wasm" ;;
+    tokenAdapter) echo "$WASM_DIR/TokenAdapter.wasm" ;;
+    scsprAdapter) echo "$WASM_DIR/ScsprAdapter.wasm" ;;
+    oracleAdapter) echo "$WASM_DIR/OracleAdapter.wasm" ;;
+    branchCspr) echo "$WASM_DIR/BranchCspr.wasm" ;;
+    branchSCSPR) echo "$WASM_DIR/BranchScspr.wasm" ;;
+    liquidationEngine) echo "$WASM_DIR/LiquidationEngine.wasm" ;;
+    stabilityPool) echo "$WASM_DIR/StabilityPool.wasm" ;;
+    redemptionEngine) echo "$WASM_DIR/RedemptionEngine.wasm" ;;
+    governance) echo "$WASM_DIR/Governance.wasm" ;;
+    scsprYbToken) echo "$WASM_DIR/ScsprYbToken.wasm" ;;
+    withdrawQueue) echo "$WASM_DIR/WithdrawQueue.wasm" ;;
+    *) echo "$WASM_FILE" ;;
+  esac
+}
+
+wasm_exists() {
+  local name="$1"
+  local path
+  path=$(resolve_wasm_path "$name")
+  [ -f "$path" ]
+}
+
+resolve_package_key_name() {
+  local name="$1"
+  case "$name" in
+    registry) echo "Registry" ;;
+    router) echo "Router" ;;
+    accessControl) echo "AccessControl" ;;
+    stablecoin) echo "CsprUsd" ;;
+    treasury) echo "Treasury" ;;
+    tokenAdapter) echo "TokenAdapter" ;;
+    scsprAdapter) echo "ScsprAdapter" ;;
+    oracleAdapter) echo "OracleAdapter" ;;
+    branchCspr) echo "BranchCspr" ;;
+    branchSCSPR) echo "BranchScspr" ;;
+    liquidationEngine) echo "LiquidationEngine" ;;
+    stabilityPool) echo "StabilityPool" ;;
+    redemptionEngine) echo "RedemptionEngine" ;;
+    governance) echo "Governance" ;;
+    scsprYbToken) echo "ScsprYbToken" ;;
+    withdrawQueue) echo "WithdrawQueue" ;;
+    *) echo "$name" ;;
+  esac
+}
+
+# Convert contract package hash (contract-package-...) into a Key-friendly hash-...
+key_from_pkg() {
+  local pkg="$1"
+  if [ -z "$pkg" ] || [ "$pkg" = "null" ]; then
+    echo ""
+    return
+  fi
+  if [[ "$pkg" == contract-package-* ]]; then
+    echo "hash-${pkg#contract-package-}"
+    return
+  fi
+  echo "$pkg"
+}
+
 # Transaction config (Casper 2.x uses put-transaction)
 PRICING_MODE="${PRICING_MODE:-classic}"
 GAS_PRICE_TOL="${GAS_PRICE_TOL:-10}"
@@ -109,6 +182,16 @@ fi
 if [ "$USE_DEPLOYED_LST_AS_SCSPR" != "true" ]; then
   : "${SCSPR_TOKEN_HASH:?Set SCSPR_TOKEN_HASH (hash-...)}"
   : "${SCSPR_LST_HASH:?Set SCSPR_LST_HASH (hash-...)}"
+  SCSPR_TOKEN_PKG="${SCSPR_TOKEN_PKG:-$SCSPR_TOKEN_HASH}"
+  SCSPR_LST_PKG="${SCSPR_LST_PKG:-$SCSPR_LST_HASH}"
+  SCSPR_TOKEN_PKG_KEY="$(key_from_pkg "$SCSPR_TOKEN_PKG")"
+  SCSPR_LST_PKG_KEY="$(key_from_pkg "$SCSPR_LST_PKG")"
+  if [[ "$SCSPR_TOKEN_PKG" != contract-package-* ]]; then
+    echo "WARNING: SCSPR_TOKEN_PKG not set; defaulting to SCSPR_TOKEN_HASH (may break internal calls)" >&2
+  fi
+  if [[ "$SCSPR_LST_PKG" != contract-package-* ]]; then
+    echo "WARNING: SCSPR_LST_PKG not set; defaulting to SCSPR_LST_HASH (may break internal calls)" >&2
+  fi
 fi
 
 # Ensure variables are always bound (set -u safe) even when populated later.
@@ -385,8 +468,17 @@ install_contract() {
   local entrypoint="$2"
   shift 2
   local args=("$@")
+  local wasm_path
+  wasm_path=$(resolve_wasm_path "$name")
+  local package_key_name
+  package_key_name=$(resolve_package_key_name "$name")
 
-  echo ""
+  if [ ! -f "$wasm_path" ]; then
+    echo "ERROR: wasm file not found for $name: $wasm_path" >&2
+    exit 1
+  fi
+
+  echo "" >&2
   echo "--- Installing $name ---" >&2
 
   local cmd=(
@@ -394,7 +486,7 @@ install_contract() {
     --node-address "$NODE_ADDRESS"
     --chain-name "$CHAIN_NAME"
     --secret-key "$SECRET_KEY"
-    --wasm-path "$WASM_FILE"
+    --wasm-path "$wasm_path"
     --session-entry-point "$entrypoint"
     --pricing-mode "$PRICING_MODE"
     --gas-price-tolerance "$GAS_PRICE_TOL"
@@ -402,6 +494,10 @@ install_contract() {
     --standard-payment true
     --install-upgrade
     --ttl "$TTL"
+    --session-arg "odra_cfg_is_upgrade:bool='false'"
+    --session-arg "odra_cfg_package_hash_key_name:string='$package_key_name'"
+    --session-arg "odra_cfg_allow_key_override:bool='true'"
+    --session-arg "odra_cfg_is_upgradable:bool='true'"
   )
 
   for arg in "${args[@]}"; do
@@ -454,7 +550,7 @@ install_contract() {
   update_record "$name" "$deploy_hash" "$contract_hash" "$package_hash"
   echo "✓ $name installed: $contract_hash" >&2
 
-  echo "$contract_hash"
+  printf '%s %s\n' "$contract_hash" "$package_hash"
 }
 
 call_contract() {
@@ -520,7 +616,7 @@ call_contract() {
 }
 
 # Entrypoint overrides (if needed)
-REGISTRY_INIT_ENTRYPOINT="${REGISTRY_INIT_ENTRYPOINT:-init_simple}"
+REGISTRY_INIT_ENTRYPOINT="${REGISTRY_INIT_ENTRYPOINT:-init}"
 ROUTER_INIT_ENTRYPOINT="${ROUTER_INIT_ENTRYPOINT:-init}"
 ACCESS_CONTROL_INIT_ENTRYPOINT="${ACCESS_CONTROL_INIT_ENTRYPOINT:-init}"
 STABLECOIN_INIT_ENTRYPOINT="${STABLECOIN_INIT_ENTRYPOINT:-init}"
@@ -538,7 +634,7 @@ SCSPR_YBTOKEN_INIT_ENTRYPOINT="${SCSPR_YBTOKEN_INIT_ENTRYPOINT:-init}"
 WITHDRAW_QUEUE_INIT_ENTRYPOINT="${WITHDRAW_QUEUE_INIT_ENTRYPOINT:-init}"
 
 # Step 3: Deploy contracts
-REGISTRY_HASH=$(install_contract "registry" "$REGISTRY_INIT_ENTRYPOINT" \
+read -r REGISTRY_HASH REGISTRY_PKG <<< "$(install_contract "registry" "$REGISTRY_INIT_ENTRYPOINT" \
   --session-arg "admin:key='$ACCOUNT_HASH'" \
   --session-arg "mcr_bps:u32='$MCR_BPS'" \
   --session-arg "min_debt:u256='$MIN_DEBT'" \
@@ -546,23 +642,29 @@ REGISTRY_HASH=$(install_contract "registry" "$REGISTRY_INIT_ENTRYPOINT" \
   --session-arg "redemption_fee_bps:u32='$REDEMPTION_FEE_BPS'" \
   --session-arg "liquidation_penalty_bps:u32='$LIQUIDATION_PENALTY_BPS'" \
   --session-arg "interest_min_bps:u32='$INTEREST_MIN_BPS'" \
-  --session-arg "interest_max_bps:u32='$INTEREST_MAX_BPS'")
+  --session-arg "interest_max_bps:u32='$INTEREST_MAX_BPS'")"
+REGISTRY_PKG_KEY="$(key_from_pkg "$REGISTRY_PKG")"
 
-ROUTER_HASH=$(install_contract "router" "$ROUTER_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'")
+read -r ROUTER_HASH ROUTER_PKG <<< "$(install_contract "router" "$ROUTER_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'")"
+ROUTER_PKG_KEY="$(key_from_pkg "$ROUTER_PKG")"
 
-ACCESS_CONTROL_HASH=$(install_contract "accessControl" "$ACCESS_CONTROL_INIT_ENTRYPOINT" \
-  --session-arg "initial_admin:key='$ACCOUNT_HASH'")
+read -r ACCESS_CONTROL_HASH ACCESS_CONTROL_PKG <<< "$(install_contract "accessControl" "$ACCESS_CONTROL_INIT_ENTRYPOINT" \
+  --session-arg "initial_admin:key='$ACCOUNT_HASH'")"
+ACCESS_CONTROL_PKG_KEY="$(key_from_pkg "$ACCESS_CONTROL_PKG")"
 
-STABLECOIN_HASH=$(install_contract "stablecoin" "$STABLECOIN_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'")
+read -r STABLECOIN_HASH STABLECOIN_PKG <<< "$(install_contract "stablecoin" "$STABLECOIN_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'")"
+STABLECOIN_PKG_KEY="$(key_from_pkg "$STABLECOIN_PKG")"
 
-TREASURY_HASH=$(install_contract "treasury" "$TREASURY_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "stablecoin:key='$STABLECOIN_HASH'")
+read -r TREASURY_HASH TREASURY_PKG <<< "$(install_contract "treasury" "$TREASURY_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "stablecoin:key='$STABLECOIN_PKG_KEY'")"
+TREASURY_PKG_KEY="$(key_from_pkg "$TREASURY_PKG")"
 
-TOKEN_ADAPTER_HASH=$(install_contract "tokenAdapter" "$TOKEN_ADAPTER_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'")
+read -r TOKEN_ADAPTER_HASH TOKEN_ADAPTER_PKG <<< "$(install_contract "tokenAdapter" "$TOKEN_ADAPTER_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'")"
+TOKEN_ADAPTER_PKG_KEY="$(key_from_pkg "$TOKEN_ADAPTER_PKG")"
 
 # Step 3b: Deploy LST contracts (stCSPR ybToken and WithdrawQueue) early (optional)
 YBTOKEN_HASH=""
@@ -575,28 +677,38 @@ if [ "$DEPLOY_LST" = "true" ]; then
   # Operator address for ybToken (defaults to deployer)
   LST_OPERATOR="${LST_OPERATOR:-$ACCOUNT_HASH}"
 
-  YBTOKEN_HASH=$(install_contract "scsprYbToken" "$SCSPR_YBTOKEN_INIT_ENTRYPOINT" \
+  read -r YBTOKEN_HASH YBTOKEN_PKG <<< "$(install_contract "scsprYbToken" "$SCSPR_YBTOKEN_INIT_ENTRYPOINT" \
     --session-arg "admin:key='$ACCOUNT_HASH'" \
-    --session-arg "operator:key='$LST_OPERATOR'")
+    --session-arg "operator:key='$LST_OPERATOR'")"
+  YBTOKEN_PKG_KEY="$(key_from_pkg "$YBTOKEN_PKG")"
 
-  WITHDRAW_QUEUE_HASH=$(install_contract "withdrawQueue" "$WITHDRAW_QUEUE_INIT_ENTRYPOINT" \
-    --session-arg "ybtoken:key='$YBTOKEN_HASH'" \
-    --session-arg "admin:key='$ACCOUNT_HASH'")
+  read -r WITHDRAW_QUEUE_HASH WITHDRAW_QUEUE_PKG <<< "$(install_contract "withdrawQueue" "$WITHDRAW_QUEUE_INIT_ENTRYPOINT" \
+    --session-arg "ybtoken:key='$YBTOKEN_PKG_KEY'" \
+    --session-arg "admin:key='$ACCOUNT_HASH'")"
+  WITHDRAW_QUEUE_PKG_KEY="$(key_from_pkg "$WITHDRAW_QUEUE_PKG")"
 
   # Configure ybToken to know about WithdrawQueue
   echo ""
   echo "--- Configuring ybToken-WithdrawQueue link ---"
   call_contract "$YBTOKEN_HASH" "set_withdraw_queue" \
-    --session-arg "queue_address:key='$WITHDRAW_QUEUE_HASH'"
+    --session-arg "queue_address:key='$WITHDRAW_QUEUE_PKG_KEY'"
   echo "✓ ybToken.set_withdraw_queue configured"
 
   if [ "$USE_DEPLOYED_LST_AS_SCSPR" = "true" ]; then
     if [ -z "${SCSPR_TOKEN_HASH:-}" ]; then
       SCSPR_TOKEN_HASH="$YBTOKEN_HASH"
     fi
+    if [ -z "${SCSPR_TOKEN_PKG:-}" ]; then
+      SCSPR_TOKEN_PKG="$YBTOKEN_PKG"
+    fi
+    SCSPR_TOKEN_PKG_KEY="$(key_from_pkg "$SCSPR_TOKEN_PKG")"
     if [ -z "${SCSPR_LST_HASH:-}" ]; then
       SCSPR_LST_HASH="$YBTOKEN_HASH"
     fi
+    if [ -z "${SCSPR_LST_PKG:-}" ]; then
+      SCSPR_LST_PKG="$YBTOKEN_PKG"
+    fi
+    SCSPR_LST_PKG_KEY="$(key_from_pkg "$SCSPR_LST_PKG")"
     update_configuration
     echo "✓ Using deployed ybToken for stCSPR:"
     echo "  - SCSPR_TOKEN_HASH=$SCSPR_TOKEN_HASH"
@@ -617,53 +729,71 @@ if [ -z "${SCSPR_TOKEN_HASH:-}" ] || [ -z "${SCSPR_LST_HASH:-}" ]; then
   exit 1
 fi
 
-SCSPR_ADAPTER_HASH=$(install_contract "scsprAdapter" "$SCSPR_ADAPTER_INIT_ENTRYPOINT" \
-  --session-arg "token_adapter:key='$TOKEN_ADAPTER_HASH'" \
-  --session-arg "scspr_address:key='$SCSPR_TOKEN_HASH'" \
-  --session-arg "lst_contract:key='$SCSPR_LST_HASH'")
+SCSPR_ADAPTER_HASH=""
+if wasm_exists "scsprAdapter"; then
+  read -r SCSPR_ADAPTER_HASH SCSPR_ADAPTER_PKG <<< "$(install_contract "scsprAdapter" "$SCSPR_ADAPTER_INIT_ENTRYPOINT" \
+    --session-arg "token_adapter:key='$TOKEN_ADAPTER_PKG_KEY'" \
+    --session-arg "scspr_address:key='$SCSPR_TOKEN_PKG_KEY'" \
+    --session-arg "lst_contract:key='$SCSPR_LST_PKG_KEY'")"
+  SCSPR_ADAPTER_PKG_KEY="$(key_from_pkg "$SCSPR_ADAPTER_PKG")"
+else
+  echo "WARNING: ScsprAdapter.wasm not found; skipping scsprAdapter deployment" >&2
+fi
 
-ORACLE_HASH=$(install_contract "oracleAdapter" "$ORACLE_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'")
+read -r ORACLE_HASH ORACLE_PKG <<< "$(install_contract "oracleAdapter" "$ORACLE_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'")"
+ORACLE_PKG_KEY="$(key_from_pkg "$ORACLE_PKG")"
 
-BRANCH_CSPR_HASH=$(install_contract "branchCspr" "$BRANCH_CSPR_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'")
+read -r BRANCH_CSPR_HASH BRANCH_CSPR_PKG <<< "$(install_contract "branchCspr" "$BRANCH_CSPR_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'")"
+BRANCH_CSPR_PKG_KEY="$(key_from_pkg "$BRANCH_CSPR_PKG")"
 
-BRANCH_SCSPR_HASH=$(install_contract "branchSCSPR" "$BRANCH_SCSPR_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'" \
-  --session-arg "scspr_token:key='$SCSPR_TOKEN_HASH'")
+read -r BRANCH_SCSPR_HASH BRANCH_SCSPR_PKG <<< "$(install_contract "branchSCSPR" "$BRANCH_SCSPR_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'" \
+  --session-arg "scspr_token:key='$SCSPR_TOKEN_PKG_KEY'")"
+BRANCH_SCSPR_PKG_KEY="$(key_from_pkg "$BRANCH_SCSPR_PKG")"
 
 # Deploy liquidation engine with placeholder stability pool (router), then patch later
-LIQUIDATION_ENGINE_HASH=$(install_contract "liquidationEngine" "$LIQUIDATION_ENGINE_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'" \
-  --session-arg "stability_pool:key='$ROUTER_HASH'" \
-  --session-arg "oracle:key='$ORACLE_HASH'")
+read -r LIQUIDATION_ENGINE_HASH LIQUIDATION_ENGINE_PKG <<< "$(install_contract "liquidationEngine" "$LIQUIDATION_ENGINE_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'" \
+  --session-arg "stability_pool:key='$ROUTER_PKG_KEY'" \
+  --session-arg "styks_oracle:key='$ORACLE_PKG_KEY'")"
+LIQUIDATION_ENGINE_PKG_KEY="$(key_from_pkg "$LIQUIDATION_ENGINE_PKG")"
 
-STABILITY_POOL_HASH=$(install_contract "stabilityPool" "$STABILITY_POOL_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'" \
-  --session-arg "stablecoin:key='$STABLECOIN_HASH'" \
-  --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'")
+read -r STABILITY_POOL_HASH STABILITY_POOL_PKG <<< "$(install_contract "stabilityPool" "$STABILITY_POOL_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'" \
+  --session-arg "stablecoin:key='$STABLECOIN_PKG_KEY'" \
+  --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'")"
+STABILITY_POOL_PKG_KEY="$(key_from_pkg "$STABILITY_POOL_PKG")"
 
-REDEMPTION_ENGINE_HASH=$(install_contract "redemptionEngine" "$REDEMPTION_ENGINE_INIT_ENTRYPOINT" \
-  --session-arg "registry:key='$REGISTRY_HASH'" \
-  --session-arg "router:key='$ROUTER_HASH'" \
-  --session-arg "stablecoin:key='$STABLECOIN_HASH'" \
-  --session-arg "treasury:key='$TREASURY_HASH'" \
-  --session-arg "oracle:key='$ORACLE_HASH'")
+read -r REDEMPTION_ENGINE_HASH REDEMPTION_ENGINE_PKG <<< "$(install_contract "redemptionEngine" "$REDEMPTION_ENGINE_INIT_ENTRYPOINT" \
+  --session-arg "registry:key='$REGISTRY_PKG_KEY'" \
+  --session-arg "router:key='$ROUTER_PKG_KEY'" \
+  --session-arg "stablecoin:key='$STABLECOIN_PKG_KEY'" \
+  --session-arg "treasury:key='$TREASURY_PKG_KEY'" \
+  --session-arg "styks_oracle:key='$ORACLE_PKG_KEY'")"
+REDEMPTION_ENGINE_PKG_KEY="$(key_from_pkg "$REDEMPTION_ENGINE_PKG")"
 
-GOVERNANCE_HASH=$(install_contract "governance" "$GOVERNANCE_INIT_ENTRYPOINT" \
-  --session-arg "access_control:key='$ACCESS_CONTROL_HASH'")
+GOVERNANCE_HASH=""
+if wasm_exists "governance"; then
+  read -r GOVERNANCE_HASH GOVERNANCE_PKG <<< "$(install_contract "governance" "$GOVERNANCE_INIT_ENTRYPOINT" \
+    --session-arg "access_control:key='$ACCESS_CONTROL_HASH'")"
+  GOVERNANCE_PKG_KEY="$(key_from_pkg "$GOVERNANCE_PKG")"
+else
+  echo "WARNING: Governance.wasm not found; skipping governance deployment" >&2
+fi
 
 # Step 3c: Configure Oracle to use ybToken for exchange rate (if LST deployed)
 if [ "$DEPLOY_LST" = "true" ] && [ -n "$YBTOKEN_HASH" ]; then
   echo ""
   echo "--- Configuring Oracle-ybToken link ---"
   call_contract "$ORACLE_HASH" "set_scspr_ybtoken" \
-    --session-arg "ybtoken:key='$YBTOKEN_HASH'"
+    --session-arg "ybtoken:key='$YBTOKEN_PKG_KEY'"
   echo "✓ Oracle.set_scspr_ybtoken configured"
 
   # Initial rate sync (R = 1.0 = 1e18)
@@ -676,27 +806,50 @@ if [ "$DEPLOY_LST" = "true" ] && [ -n "$YBTOKEN_HASH" ]; then
 fi
 
 # Step 4: Cross-configure registry and circular dependencies
-call_contract "$REGISTRY_HASH" "set_router" --session-arg "router:key='$ROUTER_HASH'"
-call_contract "$REGISTRY_HASH" "set_stablecoin" --session-arg "stablecoin:key='$STABLECOIN_HASH'"
-call_contract "$REGISTRY_HASH" "set_treasury" --session-arg "treasury:key='$TREASURY_HASH'"
-call_contract "$REGISTRY_HASH" "set_oracle" --session-arg "oracle:key='$ORACLE_HASH'"
-call_contract "$REGISTRY_HASH" "set_stability_pool" --session-arg "stability_pool:key='$STABILITY_POOL_HASH'"
-call_contract "$REGISTRY_HASH" "set_liquidation_engine" --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'"
+call_contract "$REGISTRY_HASH" "set_router" --session-arg "router:key='$ROUTER_PKG_KEY'"
+call_contract "$REGISTRY_HASH" "set_stablecoin" --session-arg "stablecoin:key='$STABLECOIN_PKG_KEY'"
+call_contract "$REGISTRY_HASH" "set_treasury" --session-arg "treasury:key='$TREASURY_PKG_KEY'"
+call_contract "$REGISTRY_HASH" "set_oracle" --session-arg "oracle:key='$ORACLE_PKG_KEY'"
+call_contract "$REGISTRY_HASH" "set_stability_pool" --session-arg "stability_pool:key='$STABILITY_POOL_PKG_KEY'"
+call_contract "$REGISTRY_HASH" "set_liquidation_engine" --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'"
+
+# Allow Router to mint/burn gUSD on behalf of users
+call_contract "$STABLECOIN_HASH" "add_minter" --session-arg "minter:key='$ROUTER_PKG_KEY'"
 
 call_contract "$REGISTRY_HASH" "register_branch_cspr" \
-  --session-arg "branch:key='$BRANCH_CSPR_HASH'" \
+  --session-arg "branch:key='$BRANCH_CSPR_PKG_KEY'" \
   --session-arg "decimals:u8='$CSPR_DECIMALS'" \
   --session-arg "mcr_bps:u32='$MCR_BPS'"
 
 call_contract "$REGISTRY_HASH" "register_branch_scspr" \
-  --session-arg "branch:key='$BRANCH_SCSPR_HASH'" \
-  --session-arg "token_address:key='$SCSPR_TOKEN_HASH'" \
+  --session-arg "branch:key='$BRANCH_SCSPR_PKG_KEY'" \
+  --session-arg "token_address:key='$SCSPR_TOKEN_PKG_KEY'" \
   --session-arg "decimals:u8='$SCSPR_DECIMALS'" \
   --session-arg "mcr_bps:u32='$MCR_BPS'"
 
 # Patch circular dependency (requires contract entrypoints)
-call_contract "$LIQUIDATION_ENGINE_HASH" "set_stability_pool" --session-arg "stability_pool:key='$STABILITY_POOL_HASH'"
-call_contract "$STABILITY_POOL_HASH" "set_liquidation_engine" --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'"
+call_contract "$LIQUIDATION_ENGINE_HASH" "set_stability_pool" --session-arg "stability_pool:key='$STABILITY_POOL_PKG_KEY'"
+call_contract "$STABILITY_POOL_HASH" "set_liquidation_engine" --session-arg "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'"
+
+# Wire liquidation and redemption engines to branches/tokens
+if [ -n "${LIQUIDATION_ENGINE_HASH:-}" ] && [ "$LIQUIDATION_ENGINE_HASH" != "null" ]; then
+  call_contract "$LIQUIDATION_ENGINE_HASH" "set_branch_cspr" --session-arg "branch:key='$BRANCH_CSPR_PKG_KEY'"
+  call_contract "$LIQUIDATION_ENGINE_HASH" "set_branch_scspr" --session-arg "branch:key='$BRANCH_SCSPR_PKG_KEY'"
+  call_contract "$LIQUIDATION_ENGINE_HASH" "set_stablecoin" --session-arg "stablecoin:key='$STABLECOIN_PKG_KEY'"
+  call_contract "$LIQUIDATION_ENGINE_HASH" "set_scspr_token" --session-arg "scspr_token:key='$SCSPR_TOKEN_PKG_KEY'"
+  if [ -n "${YBTOKEN_HASH:-}" ]; then
+    call_contract "$LIQUIDATION_ENGINE_HASH" "set_scspr_ybtoken" --session-arg "scspr_ybtoken:key='$YBTOKEN_PKG_KEY'"
+  fi
+fi
+
+if [ -n "${REDEMPTION_ENGINE_HASH:-}" ] && [ "$REDEMPTION_ENGINE_HASH" != "null" ]; then
+  call_contract "$REDEMPTION_ENGINE_HASH" "set_branch_cspr" --session-arg "branch:key='$BRANCH_CSPR_PKG_KEY'"
+  call_contract "$REDEMPTION_ENGINE_HASH" "set_branch_scspr" --session-arg "branch:key='$BRANCH_SCSPR_PKG_KEY'"
+  call_contract "$REDEMPTION_ENGINE_HASH" "set_scspr_token" --session-arg "scspr_token:key='$SCSPR_TOKEN_PKG_KEY'"
+  if [ -n "${YBTOKEN_HASH:-}" ]; then
+    call_contract "$REDEMPTION_ENGINE_HASH" "set_scspr_ybtoken" --session-arg "scspr_ybtoken:key='$YBTOKEN_PKG_KEY'"
+  fi
+fi
 
 # Mark deployment as completed
 jq '.status = "deployed"' "$DEPLOY_RECORD" > "$DEPLOY_RECORD.tmp" && mv "$DEPLOY_RECORD.tmp" "$DEPLOY_RECORD"

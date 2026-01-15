@@ -61,13 +61,23 @@ function computeOdraMappingKey(fieldIndex: number, accountHashHex: string): stri
  */
 function computeAccountHashFromPublicKey(publicKeyHex: string): string | null {
   try {
-    const cleanHex = publicKeyHex.toLowerCase();
+    const cleanHex = publicKeyHex.toLowerCase().replace(/^0x/, '');
+
+    if (cleanHex.startsWith('account-hash-')) {
+      return cleanHex.replace(/^account-hash-/, '');
+    }
 
     // Determine algorithm from prefix
     let algorithmPrefix: Uint8Array;
     let rawKeyBytes: Uint8Array;
 
-    if (cleanHex.startsWith('01')) {
+    if (cleanHex.startsWith('ed25519:')) {
+      algorithmPrefix = new TextEncoder().encode('ed25519');
+      rawKeyBytes = hexToBytes(cleanHex.slice('ed25519:'.length));
+    } else if (cleanHex.startsWith('secp256k1:')) {
+      algorithmPrefix = new TextEncoder().encode('secp256k1');
+      rawKeyBytes = hexToBytes(cleanHex.slice('secp256k1:'.length));
+    } else if (cleanHex.startsWith('01')) {
       // Ed25519: 01 + 64 hex chars (32 bytes)
       algorithmPrefix = new TextEncoder().encode('ed25519');
       rawKeyBytes = hexToBytes(cleanHex.slice(2)); // Remove 01 prefix
@@ -75,6 +85,9 @@ function computeAccountHashFromPublicKey(publicKeyHex: string): string | null {
       // Secp256k1: 02 + 66 hex chars (33 bytes)
       algorithmPrefix = new TextEncoder().encode('secp256k1');
       rawKeyBytes = hexToBytes(cleanHex.slice(2)); // Remove 02 prefix
+    } else if (/^[0-9a-f]{64}$/.test(cleanHex)) {
+      // Assume already an account-hash (32 bytes hex)
+      return cleanHex;
     } else {
       console.error('[computeAccountHash] Unknown key prefix:', cleanHex.slice(0, 2));
       return null;
@@ -903,13 +916,22 @@ async function fetchOdraVarU32(contractHash: string, fieldIndex: number): Promis
  * Compute Odra dictionary key for Mapping<Address, T>
  * Key = blake2b(field_index_u32_be || address_bytes)
  */
-function computeOdraMappingKeyAddress(fieldIndex: number, address: Uint8Array): string {
+function computeOdraMappingKeyAddress(fieldIndex: number, addressBytes: Uint8Array): string {
   // Field index as 4 bytes big endian
   const indexBytes = new Uint8Array(4);
   indexBytes[0] = (fieldIndex >> 24) & 0xff;
   indexBytes[1] = (fieldIndex >> 16) & 0xff;
   indexBytes[2] = (fieldIndex >> 8) & 0xff;
   indexBytes[3] = fieldIndex & 0xff;
+
+  // Ensure Address serialization includes the tag byte
+  let address = addressBytes;
+  if (addressBytes.length === 32) {
+    const tagged = new Uint8Array(33);
+    tagged[0] = 0x00; // AccountHash tag
+    tagged.set(addressBytes, 1);
+    address = tagged;
+  }
 
   // Concatenate index + address
   const combined = new Uint8Array(4 + address.length);
@@ -1737,35 +1759,73 @@ export interface BranchStatus {
  * VaultData: owner(Address), collateral_id(enum), collateral(U256), debt(U256), interest_rate_bps(u32), last_accrual_timestamp(u64)
  */
 function parseVaultData(bytes: Uint8Array, collateralType: CollateralType): VaultData | null {
-  // Odra Address: 1 byte tag + 32 bytes hash = 33 bytes
+  // Odra Address: tag (1 byte) + 32 bytes hash
   // CollateralId enum: 1 byte
-  // U256: 32 bytes each
-  // u32: 4 bytes
-  // u64: 8 bytes
-  // Total min: 33 + 1 + 32 + 32 + 4 + 8 = 110 bytes
+  // U256: CLValue [length_byte][data_le]
+  // u32: 4 bytes LE
+  // u64: 8 bytes LE
 
-  if (bytes.length < 78) { // At minimum: collateral(32) + debt(32) + rate(4) + timestamp(8) + some prefix
+  if (bytes.length < 44) {
     return null;
   }
 
-  // Try to parse from the end where numeric values should be
-  // Layout might be: [prefix/owner][collateral_id][collateral:32][debt:32][rate:4][timestamp:8]
-  const len = bytes.length;
+  let offset = 0;
 
-  // Parse from known offsets at the end
-  const lastAccrualTimestamp = Number(parseU64FromBytes(bytes, len - 8));
-  const interestRateBps = parseU32FromBytes(bytes, len - 12);
-  const debt = parseU256FromBytes(bytes, len - 44);
-  const collateral = parseU256FromBytes(bytes, len - 76);
+  // Skip Vec<u8> length prefix if present
+  if (bytes.length >= 4) {
+    const maybeLen = parseU32FromBytes(bytes, 0);
+    if (maybeLen + 4 === bytes.length) {
+      offset = 4;
+    }
+  }
+
+  // Parse Address (tag + 32 bytes) or raw 32-byte hash fallback
+  if (bytes.length - offset >= 33 && (bytes[offset] === 0x00 || bytes[offset] === 0x01)) {
+    offset += 33;
+  } else if (bytes.length - offset >= 32) {
+    offset += 32;
+  } else {
+    return null;
+  }
+
+  if (offset >= bytes.length) return null;
+  const collateralIdByte = bytes[offset];
+  offset += 1;
+
+  const readU256 = (): bigint => {
+    if (offset >= bytes.length) return BigInt(0);
+    const len = bytes[offset];
+    offset += 1;
+    if (len === 0) return BigInt(0);
+    let result = BigInt(0);
+    for (let i = 0; i < len && offset + i < bytes.length; i++) {
+      result += BigInt(bytes[offset + i]) << BigInt(i * 8);
+    }
+    offset += len;
+    return result;
+  };
+
+  const collateral = readU256();
+  const debt = readU256();
+
+  if (offset + 4 > bytes.length) return null;
+  const interestRateBps = parseU32FromBytes(bytes, offset);
+  offset += 4;
+
+  if (offset + 8 > bytes.length) return null;
+  const lastAccrualTimestamp = Number(parseU64FromBytes(bytes, offset));
 
   // If collateral and debt are both 0, vault doesn't exist
   if (collateral === BigInt(0) && debt === BigInt(0)) {
     return null;
   }
 
+  const parsedCollateralType =
+    collateralIdByte === 1 ? 'scspr' : collateralIdByte === 0 ? 'cspr' : collateralType;
+
   return {
     owner: '', // Will be filled by caller
-    collateralId: collateralType,
+    collateralId: parsedCollateralType,
     collateral,
     debt,
     interestRateBps,

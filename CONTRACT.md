@@ -8,37 +8,28 @@ This file records deployed contract hashes/package hashes per network. Fill in v
 
 ## Testnet
 
-**Network**: Casper Testnet (`casper-test`)
-**Node**: `https://node.testnet.casper.network/rpc`
-**Deployment Record**: `deployments/casper/testnet-20260112-045157.json`
+**Network**: Casper Testnet (casper-test)  
+**Node**: https://rpc.testnet.casperlabs.io  
+**Deployment Record**: /Users/inch/magni/cspr-cdp/deployments/casper/testnet-20260116-071611.json
 
-| Contract | Contract Hash | Package Hash |
-|----------|---------------|--------------|
-| AccessControl | `hash-3f4c4f1019f36ba0b6ca6e157be90b9f22f4a073b6c96c5b4c3b730270deab81` | `contract-package-a15275b523b19f83d8a06294388d964bdc21ea3e63793aa3ad04246eab828646` |
-| Registry | `hash-a5a730f6f09d8d97190cddf1bd685d7bbed927add85d411e6938b7dcb5cf7316` | `contract-package-58a2901bb388596bbec02bdf0c60f0b198b9317b9ddd6f8850a3bedabd2f0ff7` |
-| Router | `hash-fd0cd0e5b3aa5b03683d75c73cae4f43e4c704fb75504aa431f5fe12118fdc62` | `contract-package-e4b9bc7f5fba374aa97859567d94d157f5b146e44eb05cdcdfbb9304f3f0e015` |
-| BranchCSPR | `hash-50cd2bb3b3b6498f0bc74740cc88b13e72951a571616fe26c7c918b97d114f58` | `contract-package-cb5251cd8eda4a988030a7797c84d499157089ab6b2d41b0c4d0ef82d39dbf17` |
-| BranchSCSPR | `hash-3febfd001fabb822bec3f2b127355ebb4f77ec56e7f4bd02bc8b965aa0217448` | `contract-package-4a5139a64b857f02ccac4229706e92e9583c437f3211687e026e80d5f9ce2e6e` |
-| Stablecoin (gUSD) | `hash-e5c5b616e066c41c34d0002ef2bd208ac423f9735f3202296bae16a03573614f` | `contract-package-e48c4e67d5030a21812465f7d172df7df8f4d7b23419fdba19d0145d64dd7954` |
-| Treasury | `hash-518922729dabb3fdf9efea4253cd164bf8e5d0c96f41cc217abe5c38339d0914` | `contract-package-f15c5f06516f4686f5a41bfe6c80033253e634a54f5c86537053d20d9f585159` |
-| OracleAdapter | `hash-aff2ebdaf2d9f1aa55c7f183f065830004ab1d15477118d5fc863d2308760768` | `contract-package-895b421f4499329646ead313991e7a10f63560f06c1715f6ce96dad29edc4956` |
-| StabilityPool | `hash-b5ef8f007c8002f9d5b1d1a022d257067878b66d07df8361ac6bd8ea0c7a6f30` | `contract-package-2477a1a28c1c35d8db3ea8ac2827bd5de7a04b392c18e607dbb45a582c26d4fc` |
-| LiquidationEngine | `hash-974c365f011581d71178656f069d728f34a1ed62433e5647a6843192af4b330c` | `contract-package-ddfe2f50fb42fa330c9f3556870744ce66f620f71a2d969f5423ee73e494839b` |
-| RedemptionEngine | `hash-5a22dbabbe00d592b73f1cfac009e2b3675f04274d111e3c82920012557c7db6` | `contract-package-2c4768f1addc5b4aff55dc64c3abbe1c636862bd1c34ac5c30ed5b8e5abab0ef` |
-| TokenAdapter | `hash-017a427154c4eabaca4f87fc3becc7dae85f3a93f655e242a0ee68ab3276c9b4` | `contract-package-8bb9dc4a42446724a5c5a88ca1439dfa056ec80a5aa8c574560b1c785405eb97` |
-| ScsprYbToken | `hash-2ba817cdc1b95837b072399a7f6f96119183e1cf7a7f007f1a239b0a81bb8913` | `contract-package-bdac14fdd5bd448d4a68e99fa3f5b918045d025227984767c16b70a19f2f4dad` |
-| WithdrawQueue | `hash-74fc4736eeaa6630712b422d0e4ab04f264c3fb39039766f0594c4d5d3122813` | `contract-package-6eb7d2d0a1557767617efc684cb80b7af4be15269b695ab9970b7e077a578b93` |
-
-### Configuration
-
-| Parameter | Value |
-|-----------|-------|
-| MCR | 110% (11000 bps) |
-| Min Debt | 1 gUSD |
-| CSPR Decimals | 9 |
-| stCSPR Decimals | 9 |
-
----
+| Contract | Contract Hash | Package Hash | Notes |
+|---|---|---|---|
+| Registry | hash-e1bb71ec188beff2370b6f0926323b997b80c486e8d0a15d8d4d8403775d0bf3 | contract-package-e481602095854cb70a17b06ba46ea3f64332515cb61a6054ffc520f6d1b91d74 | |
+| Router | hash-0f5a75baedc303fd20080dec3cd237ea7895f63c7e1d04680354bf3950097906 | contract-package-791d84a0abc58eee2b56e730dec243773f454ead4a528b161317b44460706d81 | |
+| BranchCSPR | hash-cde9b4ecb0d890e10aea54a79f98c1a41b6eaaa65a74e01c5dd39a4585bc1861 | contract-package-dbd6cdd1755835b32427f8dc64117b394cc7a49583d9d7f798cc6968177d7a3a | |
+| BranchSCSPR | hash-72fcc5d5567c2c84fb55c864f47506b8252117354f27e1119af3ca6807e6b1c3 | contract-package-729b4674272c634bf6bab4d23d211708a0e0d8b36254b716db6dd34019ec16d2 | |
+| Stablecoin (gUSD) | hash-4fd74731d56f086ed5295e6b00284a1e077390f045d12e7dbca722b428806c91 | contract-package-d474cbabcd5a809d4d0312713d5793622f20693784747fb1643fdd66fd557bcc | |
+| Treasury | hash-a8267b8b284c5df859ecb21104ce75639a731d9a23b50bbd1ca8107c3c66c827 | contract-package-d533c9fa67fe16641e97f9fe9359c7441d389573053e519c1700e5411ded5664 | |
+| OracleAdapter | hash-3e509d4b4599b70d98365b19c21a1f5d3ec9018b4ca0f4d47a82ed1d9f946fd1 | contract-package-3b4f8cf0b79829d25dc573b37604ee40024078be32849b842f7b107f83fdb778 | |
+| StabilityPool | hash-cfe5a6dac3623c7176f2ede31144fe379b5d75152b9be096c23e9d337cbe6011 | contract-package-2b7759b58b721afe3946ee13a25da2204f6ee4ea4f034306a3953d1e1226590f | |
+| LiquidationEngine | hash-57e6b2a4f6563fc0b3af7112858ad544c46a3050d3ef3e1efa9ca00e30156768 | contract-package-d5254ca785f4361922494d40e8b415f86340805e99ada8f0c503545481b2c769 | |
+| RedemptionEngine | hash-9b85351860dde908f58cec86ab11231bcbc29518dee5f009447bc542a87fb74e | contract-package-e038a963729cda2326b2969498b48a44c9b48126bf05e8c6a54fd0d0d43a3139 | |
+| TokenAdapter | hash-2ad60a352faa85fb9e468aa78b2df09ecd61c17daaa53f6da997bfa18e89b264 | contract-package-b887be98010283af6fcd8ac53ffb90c2f1947d901195eb9f7d6a838e7151a6da | |
+| SCSPRAdapter | TBD | TBD | |
+| AccessControl | hash-fb492b606884a049bd0f388fed0699f1c8336ae921be8c650d4d41d0def11928 | contract-package-f282d6266d07e14dfefdb06aadc24aba2c8865962966147b399fb2a867814056 | |
+| Governance | TBD | TBD | |
+| ScsprYbToken | hash-9784e547c2c5e0c1f442513324d0931d26ea23e92d492ab4a5b3e124ed3cd789 | contract-package-786bd195bf218637fa09f2fa915a9f5e090c43bd502dac393769eed021006a22 | |
+| WithdrawQueue | hash-58b0b3968171ee4b582c4e84ae92071f764f7076fd8f7f1f5b9ebf6a113dd53b | contract-package-c4afa55a38fc8b62fcf692031fe93de99dac44002ddedc634dc15a6a1e54cd7b | |
 
 ## Mainnet
 

@@ -28,8 +28,11 @@
 //! 3. R increases, reflecting staking rewards
 
 use odra::prelude::*;
-use odra::casper_types::{U256, U512};
+use odra::casper_types::{U256, U512, Key};
+use odra::casper_types::bytesrepr::ToBytes;
 use crate::errors::CdpError;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 
 /// Scale factor for internal calculations (1e18)
 const SCALE: u128 = 1_000_000_000_000_000_000;
@@ -40,6 +43,12 @@ const DECIMALS: u8 = 9;
 /// Testnet primary validator public key (hex-encoded without 0x prefix)
 /// Confirmed: 2026-01-10, block_height=6501862, era_id=20717
 const PRIMARY_VALIDATOR_PUBKEY: &str = "0106ca7c39cd272dbf21a86eeb3b36b7c26e2e9b94af64292419f7862936bca2ca";
+const CEP18_NAME_KEY: &str = "name";
+const CEP18_SYMBOL_KEY: &str = "symbol";
+const CEP18_DECIMALS_KEY: &str = "decimals";
+const CEP18_TOTAL_SUPPLY_KEY: &str = "total_supply";
+const CEP18_BALANCES_DICT: &str = "balances";
+const CEP18_ALLOWANCES_DICT: &str = "allowances";
 
 /// Asset breakdown for total_assets calculation
 #[odra::odra_type]
@@ -133,6 +142,12 @@ impl ScsprYbToken {
             deposits_paused: false,
             withdrawals_paused: false,
         });
+        self.env().init_dictionary(CEP18_BALANCES_DICT);
+        self.env().init_dictionary(CEP18_ALLOWANCES_DICT);
+        self.env().set_named_value(CEP18_NAME_KEY, String::from("stCSPR"));
+        self.env().set_named_value(CEP18_SYMBOL_KEY, String::from("stCSPR"));
+        self.env().set_named_value(CEP18_DECIMALS_KEY, DECIMALS);
+        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, U256::zero());
     }
 
     // ===== CEP-18 Standard Functions =====
@@ -178,6 +193,7 @@ impl ScsprYbToken {
     pub fn approve(&mut self, spender: Address, amount: U256) -> bool {
         let owner = self.env().caller();
         self.allowances.set(&(owner, spender), amount);
+        self.set_allowance_cep18(owner, spender, amount);
         true
     }
 
@@ -191,7 +207,9 @@ impl ScsprYbToken {
         }
 
         self.transfer_internal(owner, recipient, amount);
-        self.allowances.set(&(owner, spender), current_allowance - amount);
+        let new_allowance = current_allowance - amount;
+        self.allowances.set(&(owner, spender), new_allowance);
+        self.set_allowance_cep18(owner, spender, new_allowance);
         true
     }
 
@@ -505,17 +523,25 @@ impl ScsprYbToken {
             self.env().revert(CdpError::InsufficientTokenBalance);
         }
 
-        self.balances.set(&from, from_balance - amount);
+        let new_from_balance = from_balance - amount;
+        self.balances.set(&from, new_from_balance);
+        self.set_balance_cep18(from, new_from_balance);
         let to_balance = self.balance_of(to);
-        self.balances.set(&to, to_balance + amount);
+        let new_to_balance = to_balance + amount;
+        self.balances.set(&to, new_to_balance);
+        self.set_balance_cep18(to, new_to_balance);
     }
 
     fn mint_internal(&mut self, to: Address, amount: U256) {
         let current_balance = self.balance_of(to);
-        self.balances.set(&to, current_balance + amount);
+        let new_balance = current_balance + amount;
+        self.balances.set(&to, new_balance);
+        self.set_balance_cep18(to, new_balance);
 
         let current_supply = self.total_shares();
-        self.total_shares.set(current_supply + amount);
+        let new_supply = current_supply + amount;
+        self.total_shares.set(new_supply);
+        self.set_total_supply_cep18(new_supply);
     }
 
     fn burn_internal(&mut self, from: Address, amount: U256) {
@@ -524,10 +550,43 @@ impl ScsprYbToken {
             self.env().revert(CdpError::InsufficientTokenBalance);
         }
 
-        self.balances.set(&from, current_balance - amount);
+        let new_balance = current_balance - amount;
+        self.balances.set(&from, new_balance);
+        self.set_balance_cep18(from, new_balance);
 
         let current_supply = self.total_shares();
-        self.total_shares.set(current_supply - amount);
+        let new_supply = current_supply - amount;
+        self.total_shares.set(new_supply);
+        self.set_total_supply_cep18(new_supply);
+    }
+
+    fn set_balance_cep18(&self, owner: Address, amount: U256) {
+        let key = Self::cep18_balance_key(owner);
+        self.env().set_dictionary_value(CEP18_BALANCES_DICT, key.as_bytes(), amount);
+    }
+
+    fn set_allowance_cep18(&self, owner: Address, spender: Address, amount: U256) {
+        let key = Self::cep18_allowance_key(owner, spender);
+        self.env().set_dictionary_value(CEP18_ALLOWANCES_DICT, key.as_bytes(), amount);
+    }
+
+    fn set_total_supply_cep18(&self, amount: U256) {
+        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, amount);
+    }
+
+    fn cep18_balance_key(owner: Address) -> String {
+        let key = Key::from(owner);
+        let bytes = key.to_bytes().unwrap_or_default();
+        BASE64_STANDARD.encode(bytes)
+    }
+
+    fn cep18_allowance_key(owner: Address, spender: Address) -> String {
+        let owner_key = Key::from(owner);
+        let spender_key = Key::from(spender);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&owner_key.to_bytes().unwrap_or_default());
+        bytes.extend_from_slice(&spender_key.to_bytes().unwrap_or_default());
+        BASE64_STANDARD.encode(bytes)
     }
 
     fn require_admin(&self) {

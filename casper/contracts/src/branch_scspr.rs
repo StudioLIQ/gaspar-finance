@@ -92,8 +92,9 @@ impl BranchScspr {
     }
 
     /// Open a new vault with stCSPR collateral
-    pub fn open_vault(&mut self, collateral_amount: U256, debt_amount: U256, interest_rate_bps: u32) {
-        let caller = self.env().caller();
+    pub fn open_vault(&mut self, owner: Address, collateral_amount: U256, debt_amount: U256, interest_rate_bps: u32) {
+        self.require_router();
+        let caller = owner;
 
         // Check safe mode - no new vaults allowed
         self.require_not_safe_mode();
@@ -148,8 +149,22 @@ impl BranchScspr {
     }
 
     /// Adjust an existing vault
-    pub fn adjust_vault(&mut self, params: AdjustVaultParams) {
-        let caller = self.env().caller();
+    pub fn adjust_vault(
+        &mut self,
+        owner: Address,
+        collateral_delta: U256,
+        collateral_is_withdraw: bool,
+        debt_delta: U256,
+        debt_is_repay: bool,
+    ) {
+        self.require_router();
+        let caller = owner;
+        let params = AdjustVaultParams {
+            collateral_delta,
+            collateral_is_withdraw,
+            debt_delta,
+            debt_is_repay,
+        };
 
         let mut vault = match self.vaults.get(&caller) {
             Some(v) => v,
@@ -253,8 +268,9 @@ impl BranchScspr {
     }
 
     /// Close vault and withdraw all collateral
-    pub fn close_vault(&mut self) {
-        let caller = self.env().caller();
+    pub fn close_vault(&mut self, owner: Address) {
+        self.require_router();
+        let caller = owner;
 
         // Check safe mode - no vault closing allowed
         self.require_not_safe_mode();
@@ -618,6 +634,14 @@ impl BranchScspr {
         });
         if state.is_active {
             self.env().revert(CdpError::SafeModeActive);
+        }
+    }
+
+    fn require_router(&self) {
+        let caller = self.env().caller();
+        let router = self.router.get().unwrap_or_else(|| self.env().self_address());
+        if caller != router {
+            self.env().revert(CdpError::UnauthorizedProtocol);
         }
     }
 
