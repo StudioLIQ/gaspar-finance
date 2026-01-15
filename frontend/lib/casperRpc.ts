@@ -916,7 +916,11 @@ async function fetchOdraVarU32(contractHash: string, fieldIndex: number): Promis
  * Compute Odra dictionary key for Mapping<Address, T>
  * Key = blake2b(field_index_u32_be || address_bytes)
  */
-function computeOdraMappingKeyAddress(fieldIndex: number, addressBytes: Uint8Array): string {
+function computeOdraMappingKeyAddress(
+  fieldIndex: number,
+  addressBytes: Uint8Array,
+  includeTag: boolean = true
+): string {
   // Field index as 4 bytes big endian
   const indexBytes = new Uint8Array(4);
   indexBytes[0] = (fieldIndex >> 24) & 0xff;
@@ -926,7 +930,7 @@ function computeOdraMappingKeyAddress(fieldIndex: number, addressBytes: Uint8Arr
 
   // Ensure Address serialization includes the tag byte
   let address = addressBytes;
-  if (addressBytes.length === 32) {
+  if (includeTag && addressBytes.length === 32) {
     const tagged = new Uint8Array(33);
     tagged[0] = 0x00; // AccountHash tag
     tagged.set(addressBytes, 1);
@@ -951,8 +955,22 @@ async function queryOdraMappingFieldAddress(
   fieldIndex: number,
   addressBytes: Uint8Array
 ): Promise<{ bytes?: string; parsed?: unknown } | null> {
-  const dictionaryKey = computeOdraMappingKeyAddress(fieldIndex, addressBytes);
-  return queryOdraDictionaryItem(contractHash, dictionaryKey);
+  const dictionaryKey = computeOdraMappingKeyAddress(fieldIndex, addressBytes, true);
+  const result = await queryOdraDictionaryItem(contractHash, dictionaryKey);
+  if (result) return result;
+
+  // Fallback for deployments that hash raw 32-byte account hashes without tag
+  if (addressBytes.length === 32) {
+    const rawKey = computeOdraMappingKeyAddress(fieldIndex, addressBytes, false);
+    return queryOdraDictionaryItem(contractHash, rawKey);
+  }
+
+  if (addressBytes.length === 33 && (addressBytes[0] === 0x00 || addressBytes[0] === 0x01)) {
+    const rawKey = computeOdraMappingKeyAddress(fieldIndex, addressBytes.slice(1), false);
+    return queryOdraDictionaryItem(contractHash, rawKey);
+  }
+
+  return null;
 }
 
 /**
