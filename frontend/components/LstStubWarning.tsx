@@ -45,7 +45,7 @@ export function LstStubWarning() {
         </div>
         <div>
           <h3 className="text-sm font-semibold text-amber-800">
-            Testnet Preview - Browser Wallet Integration
+            Preview - Browser Wallet Integration
           </h3>
           <p className="mt-1 text-sm text-amber-700">
             <strong>All LST operations</strong> (Stake, Unstake, Claim) are now functional

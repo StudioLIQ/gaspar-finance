@@ -4,8 +4,8 @@ import { Providers } from './providers';
 import { loadRuntimeConfig } from '@/lib/runtimeConfig';
 
 export const metadata: Metadata = {
-  title: 'GasparFinance | Casper Testnet',
-  description: 'Casper-native CDP protocol frontend for Casper Testnet',
+  title: 'GasparFinance | Casper',
+  description: 'Casper-native CDP protocol frontend',
   icons: {
     icon: '/protocol-logo.webp',
     shortcut: '/protocol-logo.webp',

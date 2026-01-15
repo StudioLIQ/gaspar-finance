@@ -73,10 +73,6 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Network Badge */}
-          <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-            Testnet
-          </span>
 
           {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
