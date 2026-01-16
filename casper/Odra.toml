@@ -45,7 +45,3 @@ fqn = "cspr_cdp_contracts::redemption_engine::RedemptionEngine"
 [[contracts]]
 name = "token_adapter"
 fqn = "cspr_cdp_contracts::token_adapter::TokenAdapter"
-
-[[contracts]]
-name = "scspr_adapter"
-fqn = "cspr_cdp_contracts::token_adapter::SCSPRAdapter"

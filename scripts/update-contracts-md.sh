@@ -54,7 +54,6 @@ STABILITY_POOL_HASH=$(get_hash '.contracts.stabilityPool.hash')
 LIQUIDATION_HASH=$(get_hash '.contracts.liquidationEngine.hash')
 REDEMPTION_HASH=$(get_hash '.contracts.redemptionEngine.hash')
 TOKEN_ADAPTER_HASH=$(get_hash '.contracts.tokenAdapter.hash')
-SCSPR_ADAPTER_HASH=$(get_hash '.contracts.scsprAdapter.hash')
 ACCESS_CONTROL_HASH=$(get_hash '.contracts.accessControl.hash')
 GOVERNANCE_HASH=$(get_hash '.contracts.governance.hash')
 SCSPR_YBTOKEN_HASH=$(get_hash '.contracts.scsprYbToken.hash')
@@ -71,7 +70,6 @@ STABILITY_POOL_PKG=$(get_hash '.contracts.stabilityPool.package_hash')
 LIQUIDATION_PKG=$(get_hash '.contracts.liquidationEngine.package_hash')
 REDEMPTION_PKG=$(get_hash '.contracts.redemptionEngine.package_hash')
 TOKEN_ADAPTER_PKG=$(get_hash '.contracts.tokenAdapter.package_hash')
-SCSPR_ADAPTER_PKG=$(get_hash '.contracts.scsprAdapter.package_hash')
 ACCESS_CONTROL_PKG=$(get_hash '.contracts.accessControl.package_hash')
 GOVERNANCE_PKG=$(get_hash '.contracts.governance.package_hash')
 SCSPR_YBTOKEN_PKG=$(get_hash '.contracts.scsprYbToken.package_hash')
@@ -97,7 +95,6 @@ SECTION=$(cat <<SEC
 | LiquidationEngine | $LIQUIDATION_HASH | $LIQUIDATION_PKG | |
 | RedemptionEngine | $REDEMPTION_HASH | $REDEMPTION_PKG | |
 | TokenAdapter | $TOKEN_ADAPTER_HASH | $TOKEN_ADAPTER_PKG | |
-| SCSPRAdapter | $SCSPR_ADAPTER_HASH | $SCSPR_ADAPTER_PKG | |
 | AccessControl | $ACCESS_CONTROL_HASH | $ACCESS_CONTROL_PKG | |
 | Governance | $GOVERNANCE_HASH | $GOVERNANCE_PKG | |
 | ScsprYbToken | $SCSPR_YBTOKEN_HASH | $SCSPR_YBTOKEN_PKG | |

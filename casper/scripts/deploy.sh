@@ -89,7 +89,6 @@ resolve_wasm_path() {
       ;;
     treasury) echo "$WASM_DIR/Treasury.wasm" ;;
     tokenAdapter) echo "$WASM_DIR/TokenAdapter.wasm" ;;
-    scsprAdapter) echo "$WASM_DIR/ScsprAdapter.wasm" ;;
     oracleAdapter) echo "$WASM_DIR/OracleAdapter.wasm" ;;
     branchCspr) echo "$WASM_DIR/BranchCspr.wasm" ;;
     branchSCSPR) echo "$WASM_DIR/BranchScspr.wasm" ;;
@@ -119,7 +118,6 @@ resolve_package_key_name() {
     stablecoin) echo "CsprUsd" ;;
     treasury) echo "Treasury" ;;
     tokenAdapter) echo "TokenAdapter" ;;
-    scsprAdapter) echo "ScsprAdapter" ;;
     oracleAdapter) echo "OracleAdapter" ;;
     branchCspr) echo "BranchCspr" ;;
     branchSCSPR) echo "BranchScspr" ;;
@@ -257,7 +255,6 @@ cat > "$DEPLOY_RECORD" << EOF
     "liquidationEngine": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
     "redemptionEngine": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
     "tokenAdapter": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
-    "scsprAdapter": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
     "accessControl": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
     "governance": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
     "scsprYbToken": { "hash": null, "package_hash": null, "deployed": false, "deploy_hash": null },
@@ -622,7 +619,6 @@ ACCESS_CONTROL_INIT_ENTRYPOINT="${ACCESS_CONTROL_INIT_ENTRYPOINT:-init}"
 STABLECOIN_INIT_ENTRYPOINT="${STABLECOIN_INIT_ENTRYPOINT:-init}"
 TREASURY_INIT_ENTRYPOINT="${TREASURY_INIT_ENTRYPOINT:-init}"
 TOKEN_ADAPTER_INIT_ENTRYPOINT="${TOKEN_ADAPTER_INIT_ENTRYPOINT:-init}"
-SCSPR_ADAPTER_INIT_ENTRYPOINT="${SCSPR_ADAPTER_INIT_ENTRYPOINT:-init}"
 ORACLE_INIT_ENTRYPOINT="${ORACLE_INIT_ENTRYPOINT:-init}"
 BRANCH_CSPR_INIT_ENTRYPOINT="${BRANCH_CSPR_INIT_ENTRYPOINT:-init}"
 BRANCH_SCSPR_INIT_ENTRYPOINT="${BRANCH_SCSPR_INIT_ENTRYPOINT:-init}"
@@ -727,17 +723,6 @@ fi
 if [ -z "${SCSPR_TOKEN_HASH:-}" ] || [ -z "${SCSPR_LST_HASH:-}" ]; then
   echo "ERROR: SCSPR_TOKEN_HASH / SCSPR_LST_HASH are required (or set USE_DEPLOYED_LST_AS_SCSPR=true)"
   exit 1
-fi
-
-SCSPR_ADAPTER_HASH=""
-if wasm_exists "scsprAdapter"; then
-  read -r SCSPR_ADAPTER_HASH SCSPR_ADAPTER_PKG <<< "$(install_contract "scsprAdapter" "$SCSPR_ADAPTER_INIT_ENTRYPOINT" \
-    --session-arg "token_adapter:key='$TOKEN_ADAPTER_PKG_KEY'" \
-    --session-arg "scspr_address:key='$SCSPR_TOKEN_PKG_KEY'" \
-    --session-arg "lst_contract:key='$SCSPR_LST_PKG_KEY'")"
-  SCSPR_ADAPTER_PKG_KEY="$(key_from_pkg "$SCSPR_ADAPTER_PKG")"
-else
-  echo "WARNING: ScsprAdapter.wasm not found; skipping scsprAdapter deployment" >&2
 fi
 
 read -r ORACLE_HASH ORACLE_PKG <<< "$(install_contract "oracleAdapter" "$ORACLE_INIT_ENTRYPOINT" \

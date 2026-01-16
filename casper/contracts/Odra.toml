@@ -35,8 +35,6 @@ fqn = "redemption_engine::RedemptionEngine"
 [[contracts]]
 fqn = "token_adapter::TokenAdapter"
 
-[[contracts]]
-fqn = "token_adapter::SCSPRAdapter"
 
 [[contracts]]
 fqn = "access_control::AccessControl"
