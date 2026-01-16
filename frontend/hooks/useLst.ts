@@ -32,9 +32,13 @@ import {
   getDeployExplorerUrl,
   type DeployArg,
 } from '@/lib/casperDeploy';
-
-// Refresh interval for polling data
-const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
+import {
+  APPROVAL_POLL_MAX_ATTEMPTS,
+  DATA_REFRESH_INTERVAL_MS,
+  DEPLOY_POLL_INTERVAL_MS,
+  DEPLOY_POLL_MAX_ATTEMPTS,
+  TX_TIMEOUT_MESSAGES,
+} from '@/lib/constants';
 
 // Transaction status
 export type TxStatus = 'idle' | 'signing' | 'pending' | 'success' | 'error';
@@ -168,7 +172,7 @@ export function useLst(): LstState & LstActions {
 
     const intervalId = setInterval(() => {
       void refresh();
-    }, REFRESH_INTERVAL_MS);
+    }, DATA_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
   }, [refresh]);
@@ -232,9 +236,9 @@ export function useLst(): LstState & LstActions {
 
       // Poll for deploy status
       let attempts = 0;
-      const maxAttempts = 60; // 5 minutes max
+      const maxAttempts = DEPLOY_POLL_MAX_ATTEMPTS;
       while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 5000)); // 5 sec poll
+        await new Promise((resolve) => setTimeout(resolve, DEPLOY_POLL_INTERVAL_MS));
         const status = await getDeployStatus(deployHash);
 
         if (status === 'success') {
@@ -249,9 +253,10 @@ export function useLst(): LstState & LstActions {
         attempts++;
       }
 
-      // Timeout - deploy may still be pending
-      setTxStatus('success'); // Assume success after timeout
-      return deployHash;
+      // Timeout
+      setTxStatus('error');
+      setTxError(TX_TIMEOUT_MESSAGES.transaction);
+      return null;
     },
     []
   );
@@ -343,9 +348,9 @@ export function useLst(): LstState & LstActions {
 
         // Poll for deploy status
         let attempts = 0;
-        const maxAttempts = 60; // 5 minutes max
+        const maxAttempts = DEPLOY_POLL_MAX_ATTEMPTS;
         while (attempts < maxAttempts) {
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, DEPLOY_POLL_INTERVAL_MS));
           const status = await getDeployStatus(deployHash);
 
           if (status === 'success') {
@@ -361,10 +366,10 @@ export function useLst(): LstState & LstActions {
           attempts++;
         }
 
-        // Timeout - assume success
-        setTxStatus('success');
-        await refresh();
-        return true;
+        // Timeout
+        setTxStatus('error');
+        setTxError(TX_TIMEOUT_MESSAGES.transaction);
+        return false;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Transaction failed';
         setTxError(message);
@@ -437,14 +442,20 @@ export function useLst(): LstState & LstActions {
 
         // Wait for approve to complete
         let approveStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           approveStatus = await getDeployStatus(approveHash);
           if (approveStatus !== 'pending') break;
         }
 
         if (approveStatus === 'error') {
           setTxError('Approve transaction failed on-chain');
+          setTxStatus('error');
+          setUnstakeStep('idle');
+          return false;
+        }
+        if (approveStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.approval);
           setTxStatus('error');
           setUnstakeStep('idle');
           return false;
@@ -478,14 +489,20 @@ export function useLst(): LstState & LstActions {
 
         // Wait for request_withdraw to complete
         let requestStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           requestStatus = await getDeployStatus(requestHash);
           if (requestStatus !== 'pending') break;
         }
 
         if (requestStatus === 'error') {
           setTxError('Request withdraw failed on-chain. The contract may not be properly initialized.');
+          setTxStatus('error');
+          setUnstakeStep('idle');
+          return false;
+        }
+        if (requestStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.request);
           setTxStatus('error');
           setUnstakeStep('idle');
           return false;
@@ -561,14 +578,19 @@ export function useLst(): LstState & LstActions {
 
         // Wait for claim to complete
         let claimStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           claimStatus = await getDeployStatus(claimHash);
           if (claimStatus !== 'pending') break;
         }
 
         if (claimStatus === 'error') {
           setTxError('Claim transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (claimStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.claim);
           setTxStatus('error');
           return false;
         }

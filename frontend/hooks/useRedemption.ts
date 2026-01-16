@@ -10,6 +10,12 @@ import {
   type DeployArg,
 } from '@/lib/casperDeploy';
 import {
+  APPROVAL_POLL_MAX_ATTEMPTS,
+  DATA_REFRESH_INTERVAL_MS,
+  DEPLOY_POLL_INTERVAL_MS,
+  TX_TIMEOUT_MESSAGES,
+} from '@/lib/constants';
+import {
   formatCsprAmount,
   parseCsprInput,
   getRedemptionStats,
@@ -17,9 +23,6 @@ import {
   formatGusdAmount,
   getCollateralPrice,
 } from '@/lib/casperRpc';
-
-// Refresh interval for polling data
-const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
 
 // Transaction status
 export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
@@ -186,7 +189,7 @@ export function useRedemption(): RedemptionState & RedemptionActions {
 
     const intervalId = setInterval(() => {
       void refresh();
-    }, REFRESH_INTERVAL_MS);
+    }, DATA_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
   }, [refresh]);
@@ -314,14 +317,19 @@ export function useRedemption(): RedemptionState & RedemptionActions {
 
         // Wait for approve
         let approveStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           approveStatus = await getDeployStatus(approveDeployHash);
           if (approveStatus !== 'pending') break;
         }
 
         if (approveStatus === 'error') {
           setTxError('Approval transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (approveStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.approval);
           setTxStatus('error');
           return false;
         }
@@ -356,14 +364,19 @@ export function useRedemption(): RedemptionState & RedemptionActions {
 
         // Wait for redemption
         let redeemStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           redeemStatus = await getDeployStatus(redeemDeployHash);
           if (redeemStatus !== 'pending') break;
         }
 
         if (redeemStatus === 'error') {
           setTxError('Redemption transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (redeemStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.transaction);
           setTxStatus('error');
           return false;
         }
@@ -401,4 +414,3 @@ export function useRedemption(): RedemptionState & RedemptionActions {
     resetTxState,
   };
 }
-

@@ -10,6 +10,12 @@ import {
   type DeployArg,
 } from '@/lib/casperDeploy';
 import {
+  APPROVAL_POLL_MAX_ATTEMPTS,
+  DATA_REFRESH_INTERVAL_MS,
+  DEPLOY_POLL_INTERVAL_MS,
+  TX_TIMEOUT_MESSAGES,
+} from '@/lib/constants';
+import {
   formatCsprAmount,
   parseCsprInput,
   getStabilityPoolStats,
@@ -17,9 +23,6 @@ import {
   getGusdBalance,
   formatGusdAmount,
 } from '@/lib/casperRpc';
-
-// Refresh interval for polling data
-const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
 
 // Transaction status
 export type TxStatus = 'idle' | 'signing' | 'approving' | 'pending' | 'success' | 'error';
@@ -192,7 +195,7 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
     const intervalId = setInterval(() => {
       void refresh();
-    }, REFRESH_INTERVAL_MS);
+    }, DATA_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
   }, [refresh]);
@@ -264,14 +267,19 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
         // Wait for approve
         let approveStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           approveStatus = await getDeployStatus(approveHash);
           if (approveStatus !== 'pending') break;
         }
 
         if (approveStatus === 'error') {
           setTxError('Approval transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (approveStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.approval);
           setTxStatus('error');
           return false;
         }
@@ -301,14 +309,19 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
         // Wait for deposit
         let depositStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           depositStatus = await getDeployStatus(depositHash);
           if (depositStatus !== 'pending') break;
         }
 
         if (depositStatus === 'error') {
           setTxError('Deposit transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (depositStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.transaction);
           setTxStatus('error');
           return false;
         }
@@ -382,14 +395,19 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
         // Wait for withdraw
         let withdrawStatus = 'pending';
-        for (let i = 0; i < 24; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           withdrawStatus = await getDeployStatus(withdrawHash);
           if (withdrawStatus !== 'pending') break;
         }
 
         if (withdrawStatus === 'error') {
           setTxError('Withdrawal transaction failed');
+          setTxStatus('error');
+          return false;
+        }
+        if (withdrawStatus === 'pending') {
+          setTxError(TX_TIMEOUT_MESSAGES.transaction);
           setTxStatus('error');
           return false;
         }
@@ -451,14 +469,19 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
       // Wait for claim
       let claimStatus = 'pending';
-      for (let i = 0; i < 24; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
+      for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
+        await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
         claimStatus = await getDeployStatus(claimHash);
         if (claimStatus !== 'pending') break;
       }
 
       if (claimStatus === 'error') {
         setTxError('Claim transaction failed');
+        setTxStatus('error');
+        return false;
+      }
+      if (claimStatus === 'pending') {
+        setTxError(TX_TIMEOUT_MESSAGES.transaction);
         setTxStatus('error');
         return false;
       }

@@ -36,6 +36,7 @@ import {
   DEPLOY_POLL_INTERVAL_MS,
   DEPLOY_POLL_MAX_ATTEMPTS,
   APPROVAL_POLL_MAX_ATTEMPTS,
+  TX_TIMEOUT_MESSAGES,
 } from '@/lib/constants';
 
 // Transaction status
@@ -357,9 +358,9 @@ export function useCdp(): CdpState & CdpActions {
             }
           }
 
-          setTxStatus('success');
-          await refresh();
-          return true;
+          setTxStatus('error');
+          setTxError(TX_TIMEOUT_MESSAGES.transaction);
+          return false;
         } else {
           // For stCSPR, need to approve first then call open_vault
           const ybTokenHash = CONTRACTS.scsprYbtoken;
@@ -393,15 +394,22 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for approve
+          let approveStatus: 'pending' | 'success' | 'error' = 'pending';
           for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
-            const status = await getDeployStatus(approveHash);
-            if (status === 'error') {
+            approveStatus = await getDeployStatus(approveHash);
+            if (approveStatus === 'error') {
               setTxError('Approval transaction failed');
               setTxStatus('error');
               return false;
             }
-            if (status !== 'pending') break;
+            if (approveStatus !== 'pending') break;
+          }
+
+          if (approveStatus === 'pending') {
+            setTxError(TX_TIMEOUT_MESSAGES.approval);
+            setTxStatus('error');
+            return false;
           }
 
           // Step 2: Open vault
@@ -445,9 +453,9 @@ export function useCdp(): CdpState & CdpActions {
             }
           }
 
-          setTxStatus('success');
-          await refresh();
-          return true;
+          setTxStatus('error');
+          setTxError(TX_TIMEOUT_MESSAGES.transaction);
+          return false;
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Transaction failed';
@@ -522,15 +530,22 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for gUSD approve
+          let approveStatus: 'pending' | 'success' | 'error' = 'pending';
           for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
-            const status = await getDeployStatus(approveHash);
-            if (status === 'error') {
+            approveStatus = await getDeployStatus(approveHash);
+            if (approveStatus === 'error') {
               setTxError('gUSD approval failed');
               setTxStatus('error');
               return false;
             }
-            if (status !== 'pending') break;
+            if (approveStatus !== 'pending') break;
+          }
+
+          if (approveStatus === 'pending') {
+            setTxError(TX_TIMEOUT_MESSAGES.approval);
+            setTxStatus('error');
+            return false;
           }
 
           setTxStatus('signing');
@@ -568,15 +583,22 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for stCSPR approve
+          let approveStatus: 'pending' | 'success' | 'error' = 'pending';
           for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
-            const status = await getDeployStatus(approveHash);
-            if (status === 'error') {
+            approveStatus = await getDeployStatus(approveHash);
+            if (approveStatus === 'error') {
               setTxError('stCSPR approval failed');
               setTxStatus('error');
               return false;
             }
-            if (status !== 'pending') break;
+            if (approveStatus !== 'pending') break;
+          }
+
+          if (approveStatus === 'pending') {
+            setTxError(TX_TIMEOUT_MESSAGES.approval);
+            setTxStatus('error');
+            return false;
           }
 
           setTxStatus('signing');
@@ -609,8 +631,8 @@ export function useCdp(): CdpState & CdpActions {
         setTxHash(deployHash);
 
         // Poll for status
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           const status = await getDeployStatus(deployHash);
           if (status === 'success') {
             setTxStatus('success');
@@ -623,9 +645,9 @@ export function useCdp(): CdpState & CdpActions {
           }
         }
 
-        setTxStatus('success');
-        await refresh();
-        return true;
+        setTxStatus('error');
+        setTxError(TX_TIMEOUT_MESSAGES.transaction);
+        return false;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Transaction failed';
         setTxError(message);
@@ -696,15 +718,22 @@ export function useCdp(): CdpState & CdpActions {
           setTxHash(approveHash);
 
           // Wait for gUSD approve
+          let approveStatus: 'pending' | 'success' | 'error' = 'pending';
           for (let i = 0; i < APPROVAL_POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
-            const status = await getDeployStatus(approveHash);
-            if (status === 'error') {
+            approveStatus = await getDeployStatus(approveHash);
+            if (approveStatus === 'error') {
               setTxError('gUSD approval failed');
               setTxStatus('error');
               return false;
             }
-            if (status !== 'pending') break;
+            if (approveStatus !== 'pending') break;
+          }
+
+          if (approveStatus === 'pending') {
+            setTxError(TX_TIMEOUT_MESSAGES.approval);
+            setTxStatus('error');
+            return false;
           }
 
           setTxStatus('signing');
@@ -733,8 +762,8 @@ export function useCdp(): CdpState & CdpActions {
         setTxHash(deployHash);
 
         // Poll for status
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
+        for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
           const status = await getDeployStatus(deployHash);
           if (status === 'success') {
             setTxStatus('success');
@@ -747,9 +776,9 @@ export function useCdp(): CdpState & CdpActions {
           }
         }
 
-        setTxStatus('success');
-        await refresh();
-        return true;
+        setTxStatus('error');
+        setTxError(TX_TIMEOUT_MESSAGES.transaction);
+        return false;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Transaction failed';
         setTxError(message);

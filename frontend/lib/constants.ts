@@ -21,6 +21,14 @@ export const DEPLOY_POLL_MAX_ATTEMPTS = 60;
 /** Approval transaction poll attempts (2 minutes at 5s intervals) */
 export const APPROVAL_POLL_MAX_ATTEMPTS = 24;
 
+/** Standard timeout messages for transaction polling */
+export const TX_TIMEOUT_MESSAGES = {
+  approval: 'Approval confirmation timed out',
+  transaction: 'Transaction confirmation timed out',
+  request: 'Request confirmation timed out',
+  claim: 'Claim confirmation timed out',
+} as const;
+
 // =============================================================================
 // Data Refresh
 // =============================================================================
