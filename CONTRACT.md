@@ -25,7 +25,7 @@ This file records deployed contract hashes/package hashes per network. Fill in v
 | LiquidationEngine | hash-a197ba4824dd5d047ea4ac71015f95af6aefd3808921353cbdcc0be432e6cd85 | contract-package-22af39c0b145a52afe22a768db1aa680b155d9eb852dc48a8a69c2ec65f286dd | |
 | RedemptionEngine | hash-d6f7d3515c1b7082a8275db41f83a266665de92e613e08a27867a5319ff2cd42 | contract-package-1e7645487f13d848fe751a2741a17b1aee363b9b479b452c44c55e4aa7022b55 | |
 | TokenAdapter | hash-70efcef3fa42fe95e945be626d7a0b73735286198f006b4c3db79f1db0712bee | contract-package-e3b62b682ae7d482376d940b739f3ad2b539e137466d8c0e0290463dc6c4b02a | |
-| SCSPRAdapter | TBD | TBD | |
+| SCSPRAdapter | hash-24c12b83d8c52f1a2633d024360a56a423a1dc421b3d5430fc86e6cb32c3d010 | contract-package-fda94ea4cebcfb94665f726b7e4ae9a69a1fbf7d6b7012c5d5a557ea7afd1103 | |
 | AccessControl | hash-f902d9d80648670f6671c7b0658b361e6e3d9a3e765ae73fcbf6433eaeffbca0 | contract-package-5d90faa985905e87473322ebc97c6e5bb20bbd6ad42a0d34d8e9f132dabab8e8 | |
 | Governance | TBD | TBD | |
 | ScsprYbToken | hash-f7176288acd44f3f6e7ea5f6f769f85530dc4137884d897b235ee4850ab5c468 | contract-package-2ee4e919b343add47b3b814ad9f05c8a3cbc3f461575334a50f520f290fb3051 | |
