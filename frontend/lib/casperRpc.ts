@@ -25,6 +25,21 @@ function bytesToHex(bytes: Uint8Array): string {
     .join('');
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  }
+  // Node.js fallback (Next.js server/runtime config)
+  const buf = (globalThis as typeof globalThis & {
+    Buffer?: { from: (data: Uint8Array) => { toString: (enc: string) => string } };
+  }).Buffer?.from(bytes);
+  return buf ? buf.toString('base64') : '';
+}
+
 /**
  * Compute Odra dictionary key for Mapping<Address, V>
  * Key = blake2b(field_index_u32_be + address_serialization)
@@ -51,6 +66,17 @@ function computeOdraMappingKey(fieldIndex: number, accountHashHex: string): stri
   // Blake2b hash (32 bytes)
   const hashedKey = blake2b(keyData, undefined, 32);
   return bytesToHex(hashedKey);
+}
+
+/**
+ * Compute CEP-18 balance dictionary key (base64 of Key::Account bytes)
+ */
+function computeCep18BalanceKey(accountHashHex: string): string {
+  const hashBytes = hexToBytes(accountHashHex);
+  const keyBytes = new Uint8Array(1 + hashBytes.length);
+  keyBytes[0] = 0x00; // Key::Account tag
+  keyBytes.set(hashBytes, 1);
+  return bytesToBase64(keyBytes);
 }
 
 /**
@@ -1121,6 +1147,48 @@ async function fetchOdraTokenBalance(
   }
 }
 
+/**
+ * Fetch balance from CEP-18 balances dictionary (base64 Key bytes)
+ */
+async function fetchCep18Balance(
+  contractHash: string,
+  publicKeyHex: string
+): Promise<bigint | null> {
+  const accountHashHex = computeAccountHashFromPublicKey(publicKeyHex);
+  if (!accountHashHex) {
+    console.warn('[fetchCep18Balance] Failed to compute account hash');
+    return null;
+  }
+
+  const itemKey = computeCep18BalanceKey(accountHashHex);
+  if (!itemKey) return null;
+
+  try {
+    const parsed = await queryContractDictionary(contractHash, 'balances', itemKey);
+    if (parsed === null || parsed === undefined) return null;
+    const value = BigInt(String(parsed));
+    console.log('[fetchCep18Balance] Balance:', value.toString());
+    return value;
+  } catch (err) {
+    console.warn('[fetchCep18Balance] Error:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch CEP-18 total_supply named key
+ */
+async function fetchCep18TotalSupply(contractHash: string): Promise<bigint | null> {
+  try {
+    const parsed = await queryContractNamedKey(contractHash, 'total_supply');
+    if (parsed === null || parsed === undefined) return null;
+    return BigInt(String(parsed));
+  } catch (err) {
+    console.warn('[fetchCep18TotalSupply] Error:', err);
+    return null;
+  }
+}
+
 // NOTE: Kept for backward compatibility - Odra reading now works via dictionary queries
 const ODRA_READ_LIMITATION_MSG =
   'Odra dictionary query';
@@ -1134,10 +1202,19 @@ export async function getLstExchangeRate(): Promise<LstExchangeRate | null> {
 
   try {
     // Fetch total_shares and assets breakdown to calculate rate
-    const [totalShares, assetBreakdown] = await Promise.all([
+    let totalShares = BigInt(0);
+    const [odraShares, assetBreakdown] = await Promise.all([
       fetchOdraVarU256(ybTokenHash, ODRA_FIELD_INDEX.SCSPR_TOTAL_SHARES),
       fetchAssetBreakdown(ybTokenHash),
     ]);
+    totalShares = odraShares;
+
+    if (totalShares === BigInt(0)) {
+      const cep18Supply = await fetchCep18TotalSupply(ybTokenHash);
+      if (cep18Supply && cep18Supply > BigInt(0)) {
+        totalShares = cep18Supply;
+      }
+    }
 
     console.log('[RPC] getLstExchangeRate: totalShares=', totalShares.toString());
     console.log('[RPC] getLstExchangeRate: assetBreakdown=', assetBreakdown);
@@ -1199,11 +1276,18 @@ export async function getLstBalance(publicKey: string): Promise<LstBalance | nul
   console.log('[RPC] getLstBalance: Querying Odra dictionary for stCSPR balance');
 
   try {
-    const scsprBalance = await fetchOdraTokenBalance(
+    let scsprBalance = await fetchOdraTokenBalance(
       ybTokenHash,
       ODRA_FIELD_INDEX.SCSPR_BALANCES,
       publicKey
     );
+
+    if (scsprBalance === BigInt(0)) {
+      const cep18Balance = await fetchCep18Balance(ybTokenHash, publicKey);
+      if (cep18Balance && cep18Balance > BigInt(0)) {
+        scsprBalance = cep18Balance;
+      }
+    }
 
     return {
       scsprBalance,
@@ -1290,10 +1374,19 @@ export async function getLstProtocolStats(): Promise<LstProtocolStats | null> {
 
   try {
     // Fetch total_shares and assets breakdown
-    const [totalShares, assetBreakdown] = await Promise.all([
+    let totalShares = BigInt(0);
+    const [odraShares, assetBreakdown] = await Promise.all([
       fetchOdraVarU256(ybTokenHash, ODRA_FIELD_INDEX.SCSPR_TOTAL_SHARES),
       fetchAssetBreakdown(ybTokenHash),
     ]);
+    totalShares = odraShares;
+
+    if (totalShares === BigInt(0)) {
+      const cep18Supply = await fetchCep18TotalSupply(ybTokenHash);
+      if (cep18Supply && cep18Supply > BigInt(0)) {
+        totalShares = cep18Supply;
+      }
+    }
 
     console.log('[RPC] getLstProtocolStats: totalShares=', totalShares.toString());
     console.log('[RPC] getLstProtocolStats: assetBreakdown=', assetBreakdown);

@@ -5,6 +5,7 @@
 
 use odra::prelude::*;
 use odra::casper_types::{U256, RuntimeArgs, runtime_args, Key};
+use odra::casper_types::account::AccountHash;
 use odra::casper_types::bytesrepr::ToBytes;
 use odra::CallDef;
 use crate::errors::CdpError;
@@ -19,6 +20,11 @@ const CEP18_DECIMALS_KEY: &str = "decimals";
 const CEP18_TOTAL_SUPPLY_KEY: &str = "total_supply";
 const CEP18_BALANCES_DICT: &str = "balances";
 const CEP18_ALLOWANCES_DICT: &str = "allowances";
+const SECURITY_NONE: u8 = 0;
+const SECURITY_ADMIN: u8 = 1;
+const SECURITY_MINT_AND_BURN: u8 = 2;
+const SECURITY_BURNER: u8 = 3;
+const SECURITY_MINTER: u8 = 4;
 
 /// gUSD Stablecoin Contract
 #[odra::module]
@@ -41,6 +47,8 @@ pub struct CsprUsd {
     authorized_minters: Mapping<Address, bool>,
     /// Optional supply cap
     supply_cap: Var<U256>,
+    /// CEP-18 security levels (address -> level)
+    security_levels: Mapping<Address, u8>,
 }
 
 #[odra::module]
@@ -83,9 +91,9 @@ impl CsprUsd {
         self.total_supply.get().unwrap_or(U256::zero())
     }
 
-    /// Get balance of an account
-    pub fn balance_of(&self, account: Address) -> U256 {
-        self.balances.get(&account).unwrap_or(U256::zero())
+    /// Get balance of an owner
+    pub fn balance_of(&self, owner: Address) -> U256 {
+        self.balances.get(&owner).unwrap_or(U256::zero())
     }
 
     /// Get allowance for spender
@@ -121,11 +129,32 @@ impl CsprUsd {
         true
     }
 
+    /// Increase allowance for spender
+    pub fn increase_allowance(&mut self, spender: Address, amount: U256) -> bool {
+        let owner = self.env().caller();
+        let current_allowance = self.allowance(owner, spender);
+        let new_allowance = current_allowance + amount;
+        self.approve_internal(owner, spender, new_allowance);
+        true
+    }
+
+    /// Decrease allowance for spender
+    pub fn decrease_allowance(&mut self, spender: Address, amount: U256) -> bool {
+        let owner = self.env().caller();
+        let current_allowance = self.allowance(owner, spender);
+        if current_allowance < amount {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
+        let new_allowance = current_allowance - amount;
+        self.approve_internal(owner, spender, new_allowance);
+        true
+    }
+
     // ========== Protocol Functions (Restricted) ==========
 
     /// Mint new tokens (only authorized minters)
     pub fn mint(&mut self, to: Address, amount: U256) {
-        self.require_authorized_minter();
+        self.require_minter();
 
         // Check supply cap if set
         let cap = self.supply_cap.get().unwrap_or(U256::zero());
@@ -147,14 +176,14 @@ impl CsprUsd {
     }
 
     /// Burn tokens from caller
-    pub fn burn(&mut self, amount: U256) {
-        let caller = self.env().caller();
-        self.burn_from_internal(caller, amount);
+    pub fn burn(&mut self, owner: Address, amount: U256) {
+        self.require_burner();
+        self.burn_from_internal(owner, amount);
     }
 
     /// Burn tokens from account (only authorized minters, used for repayment)
     pub fn burn_from(&mut self, from: Address, amount: U256) {
-        self.require_authorized_minter();
+        self.require_burner();
         self.burn_from_internal(from, amount);
     }
 
@@ -164,9 +193,7 @@ impl CsprUsd {
     /// have approved, without needing minter privileges.
     pub fn burn_with_allowance(&mut self, from: Address, amount: U256) {
         let spender = self.env().caller();
-
-        // Require caller is authorized protocol (SP or Redemption Engine)
-        self.require_authorized_minter();
+        self.require_burner();
 
         let current_allowance = self.allowance(from, spender);
         if current_allowance < amount {
@@ -211,6 +238,25 @@ impl CsprUsd {
     pub fn set_supply_cap(&mut self, cap: U256) {
         self.require_registry_admin();
         self.supply_cap.set(cap);
+    }
+
+    /// Change security roles (registry admin only)
+    ///
+    /// Lists are comma-separated account-hash strings. Empty string = no-op.
+    pub fn change_security(
+        &mut self,
+        none_list: String,
+        admin_list: String,
+        mint_and_burn_list: String,
+        burner_list: String,
+    ) {
+        self.require_registry_admin();
+
+        // Apply in ascending priority order: Burner < MintAndBurn < Admin < None
+        self.apply_security_list(&burner_list, SECURITY_BURNER);
+        self.apply_security_list(&mint_and_burn_list, SECURITY_MINT_AND_BURN);
+        self.apply_security_list(&admin_list, SECURITY_ADMIN);
+        self.apply_security_list(&none_list, SECURITY_NONE);
     }
 
     /// Get supply cap
@@ -293,7 +339,27 @@ impl CsprUsd {
 
     fn require_authorized_minter(&self) {
         let caller = self.env().caller();
-        if !self.is_minter(caller) {
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        let has_security = level == SECURITY_ADMIN || level == SECURITY_MINT_AND_BURN || level == SECURITY_MINTER;
+        if !self.is_minter(caller) && !has_security {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
+    }
+
+    fn require_minter(&self) {
+        let caller = self.env().caller();
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        let has_security = level == SECURITY_ADMIN || level == SECURITY_MINT_AND_BURN || level == SECURITY_MINTER;
+        if !self.is_minter(caller) && !has_security {
+            self.env().revert(CdpError::UnauthorizedProtocol);
+        }
+    }
+
+    fn require_burner(&self) {
+        let caller = self.env().caller();
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        let has_security = level == SECURITY_ADMIN || level == SECURITY_MINT_AND_BURN || level == SECURITY_BURNER;
+        if !self.is_minter(caller) && !has_security {
             self.env().revert(CdpError::UnauthorizedProtocol);
         }
     }
@@ -315,5 +381,29 @@ impl CsprUsd {
         if !is_admin {
             self.env().revert(CdpError::UnauthorizedProtocol);
         }
+    }
+
+    fn apply_security_list(&mut self, list: &str, level: u8) {
+        for raw in list.split(',') {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let addr = self.parse_account_hash_address(trimmed);
+            self.security_levels.set(&addr, level);
+        }
+    }
+
+    fn parse_account_hash_address(&self, value: &str) -> Address {
+        let formatted = if value.starts_with("account-hash-") {
+            value.to_string()
+        } else {
+            format!("account-hash-{}", value)
+        };
+        let account_hash = AccountHash::from_formatted_str(&formatted)
+            .map_err(|_| CdpError::InvalidConfig)
+            .unwrap_or_else(|err| self.env().revert(err));
+        let key = Key::Account(account_hash);
+        Address::try_from(key).unwrap_or_else(|_| self.env().revert(CdpError::InvalidConfig))
     }
 }

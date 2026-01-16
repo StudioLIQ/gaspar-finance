@@ -29,6 +29,7 @@
 
 use odra::prelude::*;
 use odra::casper_types::{U256, U512, Key};
+use odra::casper_types::account::AccountHash;
 use odra::casper_types::bytesrepr::ToBytes;
 use crate::errors::CdpError;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -49,6 +50,11 @@ const CEP18_DECIMALS_KEY: &str = "decimals";
 const CEP18_TOTAL_SUPPLY_KEY: &str = "total_supply";
 const CEP18_BALANCES_DICT: &str = "balances";
 const CEP18_ALLOWANCES_DICT: &str = "allowances";
+const SECURITY_NONE: u8 = 0;
+const SECURITY_ADMIN: u8 = 1;
+const SECURITY_MINT_AND_BURN: u8 = 2;
+const SECURITY_BURNER: u8 = 3;
+const SECURITY_MINTER: u8 = 4;
 
 /// Asset breakdown for total_assets calculation
 #[odra::odra_type]
@@ -122,6 +128,8 @@ pub struct ScsprYbToken {
     withdraw_queue: Var<Option<Address>>,
     /// Admin address
     admin: Var<Address>,
+    /// CEP-18 security levels (address -> level)
+    security_levels: Mapping<Address, u8>,
 }
 
 #[odra::module]
@@ -135,6 +143,7 @@ impl ScsprYbToken {
         self.assets.set(AssetBreakdown::default());
         self.last_sync_timestamp.set(0);
         self.admin.set(admin);
+        self.security_levels.set(&admin, SECURITY_ADMIN);
         self.withdraw_queue.set(None);
 
         self.config.set(YbTokenConfig {
@@ -173,8 +182,8 @@ impl ScsprYbToken {
     }
 
     /// Get balance of account (in shares)
-    pub fn balance_of(&self, account: Address) -> U256 {
-        self.balances.get(&account).unwrap_or(U256::zero())
+    pub fn balance_of(&self, owner: Address) -> U256 {
+        self.balances.get(&owner).unwrap_or(U256::zero())
     }
 
     /// Get allowance
@@ -211,6 +220,41 @@ impl ScsprYbToken {
         self.allowances.set(&(owner, spender), new_allowance);
         self.set_allowance_cep18(owner, spender, new_allowance);
         true
+    }
+
+    /// Increase allowance for spender
+    pub fn increase_allowance(&mut self, spender: Address, amount: U256) -> bool {
+        let owner = self.env().caller();
+        let current_allowance = self.allowance(owner, spender);
+        let new_allowance = current_allowance + amount;
+        self.allowances.set(&(owner, spender), new_allowance);
+        self.set_allowance_cep18(owner, spender, new_allowance);
+        true
+    }
+
+    /// Decrease allowance for spender
+    pub fn decrease_allowance(&mut self, spender: Address, amount: U256) -> bool {
+        let owner = self.env().caller();
+        let current_allowance = self.allowance(owner, spender);
+        if current_allowance < amount {
+            self.env().revert(CdpError::InsufficientTokenBalance);
+        }
+        let new_allowance = current_allowance - amount;
+        self.allowances.set(&(owner, spender), new_allowance);
+        self.set_allowance_cep18(owner, spender, new_allowance);
+        true
+    }
+
+    /// Mint shares (admin/minter only)
+    pub fn mint(&mut self, owner: Address, amount: U256) {
+        self.require_minter();
+        self.mint_internal(owner, amount);
+    }
+
+    /// Burn shares (admin/burner only)
+    pub fn burn(&mut self, owner: Address, amount: U256) {
+        self.require_burner();
+        self.burn_internal(owner, amount);
     }
 
     // ===== ybToken Vault Functions =====
@@ -500,6 +544,25 @@ impl ScsprYbToken {
         self.config.set(config);
     }
 
+    /// Change security roles (admin only)
+    ///
+    /// Lists are comma-separated account-hash strings. Empty string = no-op.
+    pub fn change_security(
+        &mut self,
+        none_list: String,
+        admin_list: String,
+        mint_and_burn_list: String,
+        burner_list: String,
+    ) {
+        self.require_admin();
+
+        // Apply in ascending priority order: Burner < MintAndBurn < Admin < None
+        self.apply_security_list(&burner_list, SECURITY_BURNER);
+        self.apply_security_list(&mint_and_burn_list, SECURITY_MINT_AND_BURN);
+        self.apply_security_list(&admin_list, SECURITY_ADMIN);
+        self.apply_security_list(&none_list, SECURITY_NONE);
+    }
+
     /// Get operator address
     pub fn get_operator(&self) -> Address {
         self.config.get().unwrap().operator
@@ -591,8 +654,24 @@ impl ScsprYbToken {
 
     fn require_admin(&self) {
         let caller = self.env().caller();
-        let admin = self.admin.get().unwrap();
-        if caller != admin {
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        if level != SECURITY_ADMIN {
+            self.env().revert(CdpError::Unauthorized);
+        }
+    }
+
+    fn require_minter(&self) {
+        let caller = self.env().caller();
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        if !(level == SECURITY_ADMIN || level == SECURITY_MINT_AND_BURN || level == SECURITY_MINTER) {
+            self.env().revert(CdpError::Unauthorized);
+        }
+    }
+
+    fn require_burner(&self) {
+        let caller = self.env().caller();
+        let level = self.security_levels.get(&caller).unwrap_or(SECURITY_NONE);
+        if !(level == SECURITY_ADMIN || level == SECURITY_MINT_AND_BURN || level == SECURITY_BURNER) {
             self.env().revert(CdpError::Unauthorized);
         }
     }
@@ -612,6 +691,30 @@ impl ScsprYbToken {
             Some(q) if caller == q => {}
             _ => self.env().revert(CdpError::UnauthorizedProtocol),
         }
+    }
+
+    fn apply_security_list(&mut self, list: &str, level: u8) {
+        for raw in list.split(',') {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let addr = self.parse_account_hash_address(trimmed);
+            self.security_levels.set(&addr, level);
+        }
+    }
+
+    fn parse_account_hash_address(&self, value: &str) -> Address {
+        let formatted = if value.starts_with("account-hash-") {
+            value.to_string()
+        } else {
+            format!("account-hash-{}", value)
+        };
+        let account_hash = AccountHash::from_formatted_str(&formatted)
+            .map_err(|_| CdpError::InvalidConfig)
+            .unwrap_or_else(|err| self.env().revert(err));
+        let key = Key::Account(account_hash);
+        Address::try_from(key).unwrap_or_else(|_| self.env().revert(CdpError::InvalidConfig))
     }
 }
 
