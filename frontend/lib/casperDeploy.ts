@@ -266,6 +266,7 @@ export function buildProxyCallerDeployWithSdk(
   // Normalize contract package hash format (remove known prefixes if present)
   const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
   const packageHashBytes = hexToUint8Array(packageHashClean);
+  const packageHashKey = CLValueBuilder.key(CLValueBuilder.byteArray(packageHashBytes));
 
   // Build runtime args for the target contract call
   const targetArgs = buildRuntimeArgs(params.args);
@@ -277,7 +278,7 @@ export function buildProxyCallerDeployWithSdk(
   // Create session args for proxy_caller
   // Parameter names must match exactly: package_hash, entry_point, args, attached_value, amount
   const sessionArgs = RuntimeArgs.fromMap({
-    package_hash: CLValueBuilder.byteArray(packageHashBytes),
+    package_hash: packageHashKey,
     entry_point: CLValueBuilder.string(params.entryPoint),
     args: CLValueBuilder.list(Array.from(argsBytes).map(b => CLValueBuilder.u8(b))),
     attached_value: CLValueBuilder.u512(params.attachedMotes),
