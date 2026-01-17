@@ -15,7 +15,7 @@ fqn = "branch_cspr::BranchCspr"
 fqn = "branch_scspr::BranchScspr"
 
 [[contracts]]
-fqn = "stablecoin::Stablecoin"
+fqn = "stablecoin::CsprUsd"
 
 [[contracts]]
 fqn = "treasury::Treasury"

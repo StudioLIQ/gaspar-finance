@@ -26,8 +26,58 @@ const SECURITY_MINT_AND_BURN: u8 = 2;
 const SECURITY_BURNER: u8 = 3;
 const SECURITY_MINTER: u8 = 4;
 
+#[odra::event]
+pub struct Transfer {
+    pub sender: Address,
+    pub recipient: Address,
+    pub amount: U256,
+}
+
+#[odra::event]
+pub struct TransferFrom {
+    pub spender: Address,
+    pub owner: Address,
+    pub recipient: Address,
+    pub amount: U256,
+}
+
+#[odra::event]
+pub struct SetAllowance {
+    pub owner: Address,
+    pub spender: Address,
+    pub allowance: U256,
+}
+
+#[odra::event]
+pub struct IncreaseAllowance {
+    pub owner: Address,
+    pub spender: Address,
+    pub allowance: U256,
+    pub inc_by: U256,
+}
+
+#[odra::event]
+pub struct DecreaseAllowance {
+    pub owner: Address,
+    pub spender: Address,
+    pub allowance: U256,
+    pub decr_by: U256,
+}
+
+#[odra::event]
+pub struct Mint {
+    pub recipient: Address,
+    pub amount: U256,
+}
+
+#[odra::event]
+pub struct Burn {
+    pub owner: Address,
+    pub amount: U256,
+}
+
 /// gUSD Stablecoin Contract
-#[odra::module]
+#[odra::module(events = [Transfer, TransferFrom, SetAllowance, IncreaseAllowance, DecreaseAllowance, Mint, Burn])]
 pub struct CsprUsd {
     /// Token name
     name: Var<String>,
@@ -105,13 +155,23 @@ impl CsprUsd {
     pub fn transfer(&mut self, recipient: Address, amount: U256) -> bool {
         let sender = self.env().caller();
         self.transfer_internal(sender, recipient, amount);
+        self.env().emit_event(Transfer {
+            sender,
+            recipient,
+            amount,
+        });
         true
     }
 
     /// Approve spender to spend tokens
     pub fn approve(&mut self, spender: Address, amount: U256) -> bool {
         let owner = self.env().caller();
-        self.approve_internal(owner, spender, amount);
+        self.set_allowance_internal(owner, spender, amount);
+        self.env().emit_event(SetAllowance {
+            owner,
+            spender,
+            allowance: amount,
+        });
         true
     }
 
@@ -125,7 +185,13 @@ impl CsprUsd {
         }
 
         self.transfer_internal(owner, recipient, amount);
-        self.approve_internal(owner, spender, current_allowance - amount);
+        self.set_allowance_internal(owner, spender, current_allowance - amount);
+        self.env().emit_event(TransferFrom {
+            spender,
+            owner,
+            recipient,
+            amount,
+        });
         true
     }
 
@@ -134,7 +200,13 @@ impl CsprUsd {
         let owner = self.env().caller();
         let current_allowance = self.allowance(owner, spender);
         let new_allowance = current_allowance + amount;
-        self.approve_internal(owner, spender, new_allowance);
+        self.set_allowance_internal(owner, spender, new_allowance);
+        self.env().emit_event(IncreaseAllowance {
+            owner,
+            spender,
+            allowance: new_allowance,
+            inc_by: amount,
+        });
         true
     }
 
@@ -146,7 +218,13 @@ impl CsprUsd {
             self.env().revert(CdpError::InsufficientTokenBalance);
         }
         let new_allowance = current_allowance - amount;
-        self.approve_internal(owner, spender, new_allowance);
+        self.set_allowance_internal(owner, spender, new_allowance);
+        self.env().emit_event(DecreaseAllowance {
+            owner,
+            spender,
+            allowance: new_allowance,
+            decr_by: amount,
+        });
         true
     }
 
@@ -165,14 +243,7 @@ impl CsprUsd {
             }
         }
 
-        let current_balance = self.balance_of(to);
-        self.balances.set(&to, current_balance + amount);
-        self.set_balance_cep18(to, current_balance + amount);
-
-        let current_supply = self.total_supply();
-        let new_supply = current_supply + amount;
-        self.total_supply.set(new_supply);
-        self.set_total_supply_cep18(new_supply);
+        self.mint_internal(to, amount);
     }
 
     /// Burn tokens from caller
@@ -204,7 +275,7 @@ impl CsprUsd {
         self.burn_from_internal(from, amount);
 
         // Reduce allowance
-        self.approve_internal(from, spender, current_allowance - amount);
+        self.set_allowance_internal(from, spender, current_allowance - amount);
     }
 
     /// Protocol transfer: move gUSD between addresses (only authorized minters)
@@ -213,6 +284,11 @@ impl CsprUsd {
     pub fn protocol_transfer(&mut self, from: Address, to: Address, amount: U256) {
         self.require_authorized_minter();
         self.transfer_internal(from, to, amount);
+        self.env().emit_event(Transfer {
+            sender: from,
+            recipient: to,
+            amount,
+        });
     }
 
     // ========== Admin Functions ==========
@@ -287,9 +363,26 @@ impl CsprUsd {
         self.set_balance_cep18(to, new_to_balance);
     }
 
-    fn approve_internal(&mut self, owner: Address, spender: Address, amount: U256) {
+    fn set_allowance_internal(&mut self, owner: Address, spender: Address, amount: U256) {
         self.allowances.set(&(owner, spender), amount);
         self.set_allowance_cep18(owner, spender, amount);
+    }
+
+    fn mint_internal(&mut self, to: Address, amount: U256) {
+        let current_balance = self.balance_of(to);
+        let new_balance = current_balance + amount;
+        self.balances.set(&to, new_balance);
+        self.set_balance_cep18(to, new_balance);
+
+        let current_supply = self.total_supply();
+        let new_supply = current_supply + amount;
+        self.total_supply.set(new_supply);
+        self.set_total_supply_cep18(new_supply);
+
+        self.env().emit_event(Mint {
+            recipient: to,
+            amount,
+        });
     }
 
     fn burn_from_internal(&mut self, from: Address, amount: U256) {
@@ -306,6 +399,11 @@ impl CsprUsd {
         let new_supply = current_supply - amount;
         self.total_supply.set(new_supply);
         self.set_total_supply_cep18(new_supply);
+
+        self.env().emit_event(Burn {
+            owner: from,
+            amount,
+        });
     }
 
     fn set_balance_cep18(&self, owner: Address, amount: U256) {
