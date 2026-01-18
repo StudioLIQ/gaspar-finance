@@ -10,14 +10,14 @@ This file records deployed contract hashes/package hashes per network. Fill in v
 
 **Network**: Casper Testnet (casper-test)  
 **Node**: https://rpc.testnet.casperlabs.io  
-**Deployment Record**: deployments/casper/testnet-20260116-112835.json
+**Deployment Record**: deployments/casper/testnet-20260118-183657.json
 
 | Contract | Contract Hash | Package Hash | Notes |
 |---|---|---|---|
 | Registry | hash-3e332fee2435ff3033f2eabe875ea37cb4995356cd16d56b88e8aaef292d1393 | contract-package-39b8d3447e9e20ef6d97abb26674090a6cec7cbb4da8e0c12d8488ff9a258e92 | |
 | Router | hash-ffdc649089b27139598b529958a4f84590c620f028f84118edd4a38476d7368e | contract-package-3a8afa1f3a21d4b87a466230f7abecdb795833b113ffde57b24dab78ab57344b | |
-| BranchCSPR | hash-d3e1131e57ee58721b83b4f6b0320df6bab348282d5ccf023b98f738a1547ed6 | contract-package-138c33c76081f328de421e6e01040af7e434f16b1d7eb53fe9effe9c1e734a66 | |
-| BranchSCSPR | hash-88c59089676eb53933c38b062f64fdcb69bb835749a8bb6184f6a457b5b949ac | contract-package-8667c6d54455e727579075f477ad11cc0c4ee80a4c963319c3157d8331b4202d | |
+| BranchCSPR | hash-f1e66b8cbc2fe507807b5621516e0f991fc00a35e853dc1c03ba0d069e8df9fb | contract-package-1a4740953f3d39e642cb6449e8652e86c485bc73c6157e1372b3c7d57e0aba6a | |
+| BranchSCSPR | hash-b4e7e7610d2365a874f1d450758cb84eda0f9353ebe47be544f70a7c0781b4a2 | contract-package-0f954e8f1bc058d7854f23d052dcad59c6bd43b3a0ccf1c3669713b94f2c2616 | |
 | Stablecoin (gUSD) | hash-26c31c4e97d593ea08ec5cf2beae2d2420d8352ff123473717ae85395a1ffce3 | contract-package-a50745fb69a24b3e400dfc4a2dd70ea8c7ddafae46d625dd54d4050ebcefb1f9 | |
 | Treasury | hash-936cbed3de87860eaa4a8cd32b62b50963c2b5515312b7412d685b46b8cbac2f | contract-package-44136d89f5a1026fd4808de2dfc0323ea1f14721e496fdd3f1945d66961fcbaa | |
 | OracleAdapter | hash-5a30a518e5360f8ae991b855b4a9e9eae6d12a2fb5ec400f5dfa164c8afa0b04 | contract-package-42a864cfe38e169ee5cf673536b48be5bb478faf5fd4cc07e06b5087573043d3 | |
