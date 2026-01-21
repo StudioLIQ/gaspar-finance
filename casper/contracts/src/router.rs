@@ -45,7 +45,7 @@ impl Router {
         collateral_amount: U256,
         debt_amount: U256,
         interest_rate_bps: u32,
-    ) {
+    ) -> u64 {
         self.require_not_safe_mode_for_open();
         self.validate_interest_rate(interest_rate_bps);
 
@@ -59,7 +59,7 @@ impl Router {
             "interest_rate_bps" => interest_rate_bps,
         };
         let branch_call = CallDef::new("open_vault", true, branch_args);
-        self.env().call_contract::<()>(branch_addr, branch_call);
+        let vault_id: u64 = self.env().call_contract(branch_addr, branch_call);
 
         if !debt_amount.is_zero() {
             let stablecoin_addr = self.get_stablecoin_address();
@@ -70,6 +70,8 @@ impl Router {
             let mint_call = CallDef::new("mint", true, mint_args);
             self.env().call_contract::<()>(stablecoin_addr, mint_call);
         }
+
+        vault_id
     }
 
     /// Adjust an existing vault
@@ -83,6 +85,7 @@ impl Router {
     pub fn adjust_vault(
         &mut self,
         collateral_id: CollateralId,
+        vault_id: u64,
         collateral_delta: U256,
         collateral_is_withdraw: bool,
         debt_delta: U256,
@@ -101,6 +104,7 @@ impl Router {
 
         let branch_args = runtime_args! {
             "owner" => caller,
+            "vault_id" => vault_id,
             "collateral_delta" => collateral_delta,
             "collateral_is_withdraw" => collateral_is_withdraw,
             "debt_delta" => debt_delta,
@@ -130,13 +134,13 @@ impl Router {
     }
 
     /// Close vault and withdraw all collateral
-    pub fn close_vault(&mut self, collateral_id: CollateralId) {
+    pub fn close_vault(&mut self, collateral_id: CollateralId, vault_id: u64) {
         self.require_not_safe_mode_for_close();
 
         let caller = self.env().caller();
         let branch_addr = self.get_branch_address(collateral_id);
 
-        let debt_args = runtime_args! { "owner" => caller };
+        let debt_args = runtime_args! { "owner" => caller, "vault_id" => vault_id };
         let debt_call = CallDef::new("get_debt", false, debt_args);
         let debt: U256 = self.env().call_contract(branch_addr, debt_call);
 
@@ -150,15 +154,15 @@ impl Router {
             self.env().call_contract::<()>(stablecoin_addr, burn_call);
         }
 
-        let close_args = runtime_args! { "owner" => caller };
+        let close_args = runtime_args! { "owner" => caller, "vault_id" => vault_id };
         let close_call = CallDef::new("close_vault", true, close_args);
         self.env().call_contract::<()>(branch_addr, close_call);
     }
 
     /// Get vault info for a specific owner and collateral type
-    pub fn get_vault(&self, collateral_id: CollateralId, _owner: Address) -> Option<VaultInfo> {
+    pub fn get_vault(&self, collateral_id: CollateralId, _owner: Address, vault_id: u64) -> Option<VaultInfo> {
         let branch_addr = self.get_branch_address(collateral_id);
-        let args = runtime_args! { "owner" => _owner };
+        let args = runtime_args! { "owner" => _owner, "vault_id" => vault_id };
         let call_def = CallDef::new("get_vault", false, args);
         self.env().call_contract(branch_addr, call_def)
     }

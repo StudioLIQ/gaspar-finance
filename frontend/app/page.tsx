@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Header } from '@/components/Header';
 import { CdpVaultCard } from '@/components/CdpVaultCard';
 import { CdpOpenVaultCard } from '@/components/CdpOpenVaultCard';
@@ -9,10 +9,14 @@ import { useCdp, type CollateralType } from '@/hooks/useCdp';
 
 export default function Home() {
   const [activeCollateral, setActiveCollateral] = useState<CollateralType>('cspr');
+  const [selectedVaultIds, setSelectedVaultIds] = useState<{
+    cspr: bigint | null;
+    scspr: bigint | null;
+  }>({ cspr: null, scspr: null });
 
   const {
-    csprVault,
-    scsprVault,
+    csprVaults,
+    scsprVaults,
     csprBranch,
     scsprBranch,
     csprPrice,
@@ -27,9 +31,32 @@ export default function Home() {
     resetTxState,
   } = useCdp();
 
-  const currentVault = activeCollateral === 'cspr' ? csprVault : scsprVault;
+  // Keep selection stable when vault lists change
+  useEffect(() => {
+    setSelectedVaultIds((prev) => {
+      const next = { ...prev };
+      if (csprVaults.length === 0) {
+        next.cspr = null;
+      } else if (!next.cspr || !csprVaults.some((v) => v.vaultId === next.cspr)) {
+        next.cspr = csprVaults[0].vaultId;
+      }
+      if (scsprVaults.length === 0) {
+        next.scspr = null;
+      } else if (!next.scspr || !scsprVaults.some((v) => v.vaultId === next.scspr)) {
+        next.scspr = scsprVaults[0].vaultId;
+      }
+      return next;
+    });
+  }, [csprVaults, scsprVaults]);
+
+  const vaultsForType = activeCollateral === 'cspr' ? csprVaults : scsprVaults;
+  const selectedIdForType =
+    activeCollateral === 'cspr' ? selectedVaultIds.cspr : selectedVaultIds.scspr;
+  const currentVault =
+    (selectedIdForType
+      ? vaultsForType.find((v) => v.vaultId === selectedIdForType)
+      : null) ?? vaultsForType[0] ?? null;
   const currentPrice = activeCollateral === 'cspr' ? csprPrice : scsprPrice;
-  const hasExistingVault = currentVault !== null;
 
   return (
     <div className="min-h-screen">
@@ -66,6 +93,34 @@ export default function Home() {
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Column - Vault Status */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Vault Selector */}
+            {vaultsForType.length > 1 && (
+              <div className="flex justify-end">
+                <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+                  <span className="text-sm text-gray-600">Vault</span>
+                  <select
+                    className="text-sm bg-transparent outline-none"
+                    value={(currentVault?.vaultId ?? vaultsForType[0].vaultId).toString()}
+                    onChange={(e) =>
+                      setSelectedVaultIds((prev) => ({
+                        ...prev,
+                        [activeCollateral]: BigInt(e.target.value),
+                      }))
+                    }
+                  >
+                    {vaultsForType
+                      .slice()
+                      .sort((a, b) => (a.vaultId < b.vaultId ? -1 : a.vaultId > b.vaultId ? 1 : 0))
+                      .map((v) => (
+                        <option key={v.vaultId.toString()} value={v.vaultId.toString()}>
+                          #{v.vaultId.toString()}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             {/* Existing Vault Card */}
             <CdpVaultCard
               vault={currentVault}
@@ -74,7 +129,9 @@ export default function Home() {
               isLoading={isLoading}
               txStatus={txStatus}
               txError={txError}
-              onClose={() => closeVault(activeCollateral)}
+              onClose={() =>
+                currentVault ? closeVault(activeCollateral, currentVault.vaultId) : Promise.resolve(false)
+              }
               resetTxState={resetTxState}
             />
 
@@ -83,7 +140,6 @@ export default function Home() {
               collateralType={activeCollateral}
               collateralPrice={currentPrice}
               balances={balances}
-              hasExistingVault={hasExistingVault}
               txStatus={txStatus}
               txError={txError}
               onOpenVault={openVault}

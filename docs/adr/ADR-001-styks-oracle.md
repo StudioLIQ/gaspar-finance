@@ -75,8 +75,8 @@ When oracle status is not `OK` (UNAVAILABLE/STALE/DEVIATION/INVALID_RATE/DECIMAL
 Allowed/blocked actions in safe_mode (decision-locked):
 
 - **Allowed (risk reducing / not price-dependent)**
-  - Repay only: `adjustVault` with `debtDelta <= 0`
-  - Add collateral: `adjustVault` with `collateralDelta >= 0`
+  - Repay only: `adjustVault(vaultId, debtDelta <= 0)`
+  - Add collateral: `adjustVault(vaultId, collateralDelta >= 0)`
   - StabilityPool deposit (system buffer increase)
 - **Blocked (risk increasing / price-sensitive)**
   - New vault (open), debt increase (borrow)

@@ -216,13 +216,21 @@ const ODRA_FIELD_INDEX = {
   SP_DEPOSITS: 14,  // Mapping<Address, DepositSnapshot>
   SP_SAFE_MODE: 15,
 
-  // BranchCspr: registry(1), router(2), vaults(3), sorted_vaults(4), sorted_head(5), sorted_tail(6),
+  // Branch (CSPR/SCSPR common prefix): registry(1), router(2), vaults(3), sorted_vaults(4), sorted_head(5), sorted_tail(6),
   // total_collateral(7), total_debt(8), vault_count(9), safe_mode(10), last_good_price(11), ...
-  BRANCH_VAULTS: 3,  // Mapping<Address, VaultData>
+  BRANCH_VAULTS: 3,  // Mapping<VaultKey(owner+id), VaultData>
   BRANCH_TOTAL_COLLATERAL: 7,
   BRANCH_TOTAL_DEBT: 8,
   BRANCH_VAULT_COUNT: 9,
   BRANCH_SAFE_MODE: 10,
+
+  // BranchCspr tail fields (multi-vault)
+  BRANCH_CSPR_USER_VAULT_COUNT: 15,
+  BRANCH_CSPR_USER_VAULT_IDS: 16, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
+
+  // BranchScspr tail fields (multi-vault)
+  BRANCH_SCSPR_USER_VAULT_COUNT: 17,
+  BRANCH_SCSPR_USER_VAULT_IDS: 18, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
 
   // RedemptionEngine: registry(1), router(2), stablecoin(3), treasury(4), styks_oracle(5),
   // scspr_ybtoken(6), branch_cspr(7), branch_scspr(8), scspr_token(9),
@@ -971,6 +979,85 @@ function computeOdraMappingKeyAddress(
   // Blake2b hash (32 bytes)
   const hashedKey = blake2b(combined, undefined, 32);
   return bytesToHex(hashedKey);
+}
+
+/**
+ * Convert u64 bigint to 8-byte little-endian bytes
+ */
+function u64ToBytesLE(value: bigint): Uint8Array {
+  let v = value;
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number(v & BigInt(0xff));
+    v >>= BigInt(8);
+  }
+  return out;
+}
+
+/**
+ * Compute Odra dictionary key for Mapping<(Address, u64), T>
+ * Key = blake2b(field_index_u32_be || address_bytes || u64_le)
+ */
+function computeOdraMappingKeyAddressU64(
+  fieldIndex: number,
+  addressBytes: Uint8Array,
+  u64Value: bigint,
+  includeTag: boolean = true
+): string {
+  // Field index as 4 bytes big endian
+  const indexBytes = new Uint8Array(4);
+  indexBytes[0] = (fieldIndex >> 24) & 0xff;
+  indexBytes[1] = (fieldIndex >> 16) & 0xff;
+  indexBytes[2] = (fieldIndex >> 8) & 0xff;
+  indexBytes[3] = fieldIndex & 0xff;
+
+  // Ensure Address serialization includes the tag byte
+  let address = addressBytes;
+  if (includeTag && addressBytes.length === 32) {
+    const tagged = new Uint8Array(33);
+    tagged[0] = 0x00; // AccountHash tag
+    tagged.set(addressBytes, 1);
+    address = tagged;
+  }
+
+  const u64Bytes = u64ToBytesLE(u64Value);
+
+  // Concatenate index + address + u64
+  const combined = new Uint8Array(4 + address.length + u64Bytes.length);
+  combined.set(indexBytes, 0);
+  combined.set(address, 4);
+  combined.set(u64Bytes, 4 + address.length);
+
+  // Blake2b hash (32 bytes)
+  const hashedKey = blake2b(combined, undefined, 32);
+  return bytesToHex(hashedKey);
+}
+
+/**
+ * Query Odra Mapping field where key is (Address, u64) (VaultKey/UserVaultIndex)
+ */
+async function queryOdraMappingFieldAddressU64Key(
+  contractHash: string,
+  fieldIndex: number,
+  addressBytes: Uint8Array,
+  u64Value: bigint
+): Promise<{ bytes?: string; parsed?: unknown } | null> {
+  const dictionaryKey = computeOdraMappingKeyAddressU64(fieldIndex, addressBytes, u64Value, true);
+  const result = await queryOdraDictionaryItem(contractHash, dictionaryKey);
+  if (result) return result;
+
+  // Fallback for deployments that hash raw 32-byte account hashes without tag
+  if (addressBytes.length === 32) {
+    const rawKey = computeOdraMappingKeyAddressU64(fieldIndex, addressBytes, u64Value, false);
+    return queryOdraDictionaryItem(contractHash, rawKey);
+  }
+
+  if (addressBytes.length === 33 && (addressBytes[0] === 0x00 || addressBytes[0] === 0x01)) {
+    const rawKey = computeOdraMappingKeyAddressU64(fieldIndex, addressBytes.slice(1), u64Value, false);
+    return queryOdraDictionaryItem(contractHash, rawKey);
+  }
+
+  return null;
 }
 
 /**
@@ -1851,6 +1938,7 @@ export interface VaultData {
 
 // Vault info with computed values
 export interface VaultInfo {
+  vaultId: bigint;
   vault: VaultData;
   icrBps: number; // Individual Collateralization Ratio in basis points
   collateralValueUsd: bigint;
@@ -1944,89 +2032,150 @@ function parseVaultData(bytes: Uint8Array, collateralType: CollateralType): Vaul
   };
 }
 
-// Get user's vault for a specific collateral type
-export async function getUserVault(
+// Parse u64 from an Odra mapping query result
+function parseOdraMappingU64(result: { bytes?: string; parsed?: unknown }): bigint {
+  const parsed = result.parsed;
+  if (Array.isArray(parsed)) {
+    const bytes = new Uint8Array(parsed);
+    return parseU64FromBytes(bytes, 0);
+  }
+  if (typeof parsed === 'number') {
+    return BigInt(parsed);
+  }
+  if (parsed !== undefined && parsed !== null) {
+    return BigInt(String(parsed));
+  }
+  if (result.bytes) {
+    const bytes = hexToBytes(result.bytes);
+    return parseU64FromBytes(bytes, 4);
+  }
+  return BigInt(0);
+}
+
+// Get user's vaults for a specific collateral type
+export async function getUserVaults(
   publicKey: string,
   collateralType: CollateralType
-): Promise<VaultInfo | null> {
+): Promise<VaultInfo[]> {
   const branchHash = collateralType === 'cspr'
     ? CONTRACTS.branchCspr
     : CONTRACTS.branchSCSPR;
 
   if (!branchHash || branchHash === 'null') {
-    return null;
+    return [];
   }
+
+  const userVaultCountIndex =
+    collateralType === 'cspr'
+      ? ODRA_FIELD_INDEX.BRANCH_CSPR_USER_VAULT_COUNT
+      : ODRA_FIELD_INDEX.BRANCH_SCSPR_USER_VAULT_COUNT;
+  const userVaultIdsIndex =
+    collateralType === 'cspr'
+      ? ODRA_FIELD_INDEX.BRANCH_CSPR_USER_VAULT_IDS
+      : ODRA_FIELD_INDEX.BRANCH_SCSPR_USER_VAULT_IDS;
 
   try {
     // Get account hash from public key
     const accountHash = publicKeyToAccountHash(publicKey);
     if (!accountHash) {
-      console.warn('[RPC] getUserVault: Failed to compute account hash');
-      return null;
+      console.warn('[RPC] getUserVaults: Failed to compute account hash');
+      return [];
     }
 
-    // Query vaults Mapping
-    const result = await queryOdraMappingFieldAddress(
+    // Load per-user vault count
+    const countResult = await queryOdraMappingFieldAddress(
       branchHash,
-      ODRA_FIELD_INDEX.BRANCH_VAULTS,
+      userVaultCountIndex,
       accountHash
     );
+    const userVaultCount = countResult ? parseOdraMappingU64(countResult) : BigInt(0);
 
-    if (!result) {
-      // No vault found
-      return null;
+    if (userVaultCount === BigInt(0)) {
+      return [];
     }
 
-    const parsed = result.parsed;
-    let vaultData: VaultData | null = null;
-
-    if (Array.isArray(parsed)) {
-      const bytes = new Uint8Array(parsed);
-      vaultData = parseVaultData(bytes, collateralType);
-    } else if (result.bytes) {
-      const bytes = hexToBytes(result.bytes);
-      // Skip 4-byte length prefix
-      vaultData = parseVaultData(bytes.slice(4), collateralType);
-    }
-
-    if (!vaultData || (vaultData.collateral === BigInt(0) && vaultData.debt === BigInt(0))) {
-      return null;
-    }
-
-    vaultData.owner = publicKey;
-
-    console.log(`[RPC] getUserVault(${collateralType}):`, {
-      collateral: vaultData.collateral.toString(),
-      debt: vaultData.debt.toString(),
-      interestRateBps: vaultData.interestRateBps,
-    });
-
-    // Calculate ICR (Individual Collateralization Ratio)
-    // ICR = (collateral * price * 10000) / debt
     const price = await getCollateralPrice(collateralType);
-    let icrBps = 0;
-    let collateralValueUsd = BigInt(0);
+    const maxToFetch = BigInt(50);
+    const fetchCount = userVaultCount > maxToFetch ? maxToFetch : userVaultCount;
 
-    if (price > BigInt(0)) {
-      // collateral uses 9 decimals, price uses 18 decimals
-      // collateralValueUsd = collateral * price / 1e9
-      collateralValueUsd = (vaultData.collateral * price) / BigInt(10 ** 9);
-      if (vaultData.debt > BigInt(0)) {
-        icrBps = Number((collateralValueUsd * BigInt(10000)) / vaultData.debt);
-      } else {
-        icrBps = 999999; // Infinite ICR when no debt
+    const vaults: VaultInfo[] = [];
+
+    for (let i = BigInt(0); i < fetchCount; i++) {
+      const vaultIdResult = await queryOdraMappingFieldAddressU64Key(
+        branchHash,
+        userVaultIdsIndex,
+        accountHash,
+        i
+      );
+      if (!vaultIdResult) continue;
+      const vaultId = parseOdraMappingU64(vaultIdResult);
+      if (vaultId === BigInt(0)) continue;
+
+      const vaultResult = await queryOdraMappingFieldAddressU64Key(
+        branchHash,
+        ODRA_FIELD_INDEX.BRANCH_VAULTS,
+        accountHash,
+        vaultId
+      );
+      if (!vaultResult) continue;
+
+      const parsed = vaultResult.parsed;
+      let vaultData: VaultData | null = null;
+
+      if (Array.isArray(parsed)) {
+        const bytes = new Uint8Array(parsed);
+        vaultData = parseVaultData(bytes, collateralType);
+      } else if (vaultResult.bytes) {
+        const bytes = hexToBytes(vaultResult.bytes);
+        // Skip 4-byte length prefix
+        vaultData = parseVaultData(bytes.slice(4), collateralType);
       }
+
+      if (!vaultData || (vaultData.collateral === BigInt(0) && vaultData.debt === BigInt(0))) {
+        continue;
+      }
+
+      vaultData.owner = publicKey;
+
+      // Calculate ICR (Individual Collateralization Ratio)
+      // ICR = (collateral_value_usd * 10000) / debt
+      let icrBps = 0;
+      let collateralValueUsd = BigInt(0);
+
+      if (price > BigInt(0)) {
+        // collateral uses 9 decimals, price uses 18 decimals
+        // collateralValueUsd = collateral * price / 1e9
+        collateralValueUsd = (vaultData.collateral * price) / BigInt(10 ** 9);
+        if (vaultData.debt > BigInt(0)) {
+          icrBps = Number((collateralValueUsd * BigInt(10000)) / vaultData.debt);
+        } else {
+          icrBps = 999999; // Infinite ICR when no debt
+        }
+      }
+
+      vaults.push({
+        vaultId,
+        vault: vaultData,
+        icrBps,
+        collateralValueUsd,
+      });
     }
 
-    return {
-      vault: vaultData,
-      icrBps,
-      collateralValueUsd,
-    };
+    vaults.sort((a, b) => (a.vaultId < b.vaultId ? -1 : a.vaultId > b.vaultId ? 1 : 0));
+    return vaults;
   } catch (err) {
-    console.warn(`[RPC] getUserVault(${collateralType}) failed:`, err);
-    return null;
+    console.warn(`[RPC] getUserVaults(${collateralType}) failed:`, err);
+    return [];
   }
+}
+
+// Backward-compatible helper: returns the first vault (if any)
+export async function getUserVault(
+  publicKey: string,
+  collateralType: CollateralType
+): Promise<VaultInfo | null> {
+  const vaults = await getUserVaults(publicKey, collateralType);
+  return vaults[0] ?? null;
 }
 
 // Get branch status for a collateral type

@@ -14,18 +14,18 @@
 use odra::prelude::*;
 use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
 use odra::CallDef;
-use crate::types::{CollateralId, OracleStatus, SafeModeState};
+use crate::types::{CollateralId, VaultKey, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
 use crate::styks_oracle::StyksOracle;
 
 /// Branch interface for vault operations
 #[odra::external_contract]
 pub trait Branch {
-    fn get_collateral(&self, owner: Address) -> U256;
-    fn get_debt(&self, owner: Address) -> U256;
-    fn seize_collateral(&mut self, owner: Address, amount: U256);
-    fn reduce_debt(&mut self, owner: Address, amount: U256);
-    fn close_vault(&mut self, owner: Address);
+    fn get_collateral(&self, owner: Address, vault_id: u64) -> U256;
+    fn get_debt(&self, owner: Address, vault_id: u64) -> U256;
+    fn seize_collateral(&mut self, owner: Address, vault_id: u64, amount: U256);
+    fn reduce_debt(&mut self, owner: Address, vault_id: u64, amount: U256);
+    fn close_vault(&mut self, owner: Address, vault_id: u64);
 }
 
 /// Stability Pool interface
@@ -65,8 +65,8 @@ const BPS_SCALE: u32 = 10000;
 /// Liquidation result for a single vault
 #[odra::odra_type]
 pub struct LiquidationResult {
-    /// Owner of the liquidated vault
-    pub vault_owner: Address,
+    /// Liquidated vault key
+    pub vault_key: VaultKey,
     /// Collateral type
     pub collateral_id: CollateralId,
     /// Debt covered in the liquidation
@@ -192,12 +192,12 @@ impl LiquidationEngine {
     // ========== Liquidation Functions ==========
 
     /// Liquidate a single vault
-    pub fn liquidate(&mut self, collateral_id: CollateralId, vault_owner: Address) -> LiquidationResult {
+    pub fn liquidate(&mut self, collateral_id: CollateralId, vault_owner: Address, vault_id: u64) -> LiquidationResult {
         // Check safe mode - liquidations blocked
         self.require_not_safe_mode();
 
         // Get vault data and check if liquidatable
-        let vault_data = self.get_vault_data(collateral_id, vault_owner);
+        let vault_data = self.get_vault_data(collateral_id, vault_owner, vault_id);
         if vault_data.collateral.is_zero() && vault_data.debt.is_zero() {
             self.env().revert(CdpError::VaultNotFound);
         }
@@ -214,10 +214,12 @@ impl LiquidationEngine {
             self.env().revert(CdpError::NotLiquidatable);
         }
 
+        let vault_key = VaultKey { owner: vault_owner, id: vault_id };
+
         // Calculate liquidation amounts
         let result = self.calculate_liquidation(
             collateral_id,
-            vault_owner,
+            vault_key,
             vault_data.collateral,
             vault_data.debt,
             price,
@@ -242,20 +244,20 @@ impl LiquidationEngine {
     /// Frontend-friendly liquidate using primitive types
     ///
     /// collateral_id: 0 = CSPR, 1 = stCSPR
-    pub fn liquidate_u8(&mut self, collateral_id: u8, vault_owner: Address) -> LiquidationResult {
+    pub fn liquidate_u8(&mut self, collateral_id: u8, vault_owner: Address, vault_id: u64) -> LiquidationResult {
         let coll_id = match collateral_id {
             0 => CollateralId::Cspr,
             1 => CollateralId::SCSPR,
             _ => self.env().revert(CdpError::UnsupportedCollateral),
         };
-        self.liquidate(coll_id, vault_owner)
+        self.liquidate(coll_id, vault_owner, vault_id)
     }
 
     /// Batch liquidate multiple vaults (gas efficient)
     pub fn batch_liquidate(
         &mut self,
         collateral_id: CollateralId,
-        vault_owners: Vec<Address>,
+        vault_keys: Vec<VaultKey>,
         max_vaults: u32,
     ) -> BatchLiquidationResult {
         // Check safe mode
@@ -268,8 +270,8 @@ impl LiquidationEngine {
         // Get price once for batch efficiency
         let price = self.get_price(collateral_id);
 
-        for owner in vault_owners.iter().take(max_vaults as usize) {
-            let vault_data = self.get_vault_data(collateral_id, *owner);
+        for vault_key in vault_keys.iter().take(max_vaults as usize) {
+            let vault_data = self.get_vault_data(collateral_id, vault_key.owner, vault_key.id);
 
             // Skip empty vaults
             if vault_data.collateral.is_zero() && vault_data.debt.is_zero() {
@@ -288,7 +290,7 @@ impl LiquidationEngine {
             // Calculate liquidation
             let result = self.calculate_liquidation(
                 collateral_id,
-                *owner,
+                *vault_key,
                 vault_data.collateral,
                 vault_data.debt,
                 price,
@@ -322,8 +324,8 @@ impl LiquidationEngine {
     // ========== Query Functions ==========
 
     /// Check if a vault is liquidatable
-    pub fn is_liquidatable(&self, collateral_id: CollateralId, vault_owner: Address) -> bool {
-        let vault_data = self.get_vault_data(collateral_id, vault_owner);
+    pub fn is_liquidatable(&self, collateral_id: CollateralId, vault_owner: Address, vault_id: u64) -> bool {
+        let vault_data = self.get_vault_data(collateral_id, vault_owner, vault_id);
         if vault_data.collateral.is_zero() && vault_data.debt.is_zero() {
             return false;
         }
@@ -404,7 +406,7 @@ impl LiquidationEngine {
         }
     }
 
-    fn get_vault_data(&self, collateral_id: CollateralId, owner: Address) -> VaultDataSimple {
+    fn get_vault_data(&self, collateral_id: CollateralId, owner: Address, vault_id: u64) -> VaultDataSimple {
         let branch_addr = match collateral_id {
             CollateralId::Cspr => self.branch_cspr.get().expect("branch_cspr not set"),
             CollateralId::SCSPR => self.branch_scspr.get().expect("branch_scspr not set"),
@@ -412,14 +414,16 @@ impl LiquidationEngine {
 
         // Get collateral from branch
         let get_coll_args = runtime_args! {
-            "owner" => owner
+            "owner" => owner,
+            "vault_id" => vault_id
         };
         let get_coll_call = CallDef::new("get_collateral", false, get_coll_args);
         let collateral: U256 = self.env().call_contract(branch_addr, get_coll_call);
 
         // Get debt from branch
         let get_debt_args = runtime_args! {
-            "owner" => owner
+            "owner" => owner,
+            "vault_id" => vault_id
         };
         let get_debt_call = CallDef::new("get_debt", false, get_debt_args);
         let debt: U256 = self.env().call_contract(branch_addr, get_debt_call);
@@ -459,7 +463,8 @@ impl LiquidationEngine {
 
         // 2. Seize collateral from vault (branch updates its accounting)
         let seize_args = runtime_args! {
-            "owner" => result.vault_owner,
+            "owner" => result.vault_key.owner,
+            "vault_id" => result.vault_key.id,
             "amount" => result.collateral_seized
         };
         let seize_call = CallDef::new("seize_collateral", true, seize_args);
@@ -467,7 +472,8 @@ impl LiquidationEngine {
 
         // 3. Reduce vault debt
         let reduce_debt_args = runtime_args! {
-            "owner" => result.vault_owner,
+            "owner" => result.vault_key.owner,
+            "vault_id" => result.vault_key.id,
             "amount" => result.debt_liquidated
         };
         let reduce_debt_call = CallDef::new("reduce_debt", true, reduce_debt_args);
@@ -538,7 +544,8 @@ impl LiquidationEngine {
         // 6. Close vault if fully liquidated
         if result.fully_liquidated {
             let close_args = runtime_args! {
-                "owner" => result.vault_owner
+                "owner" => result.vault_key.owner,
+                "vault_id" => result.vault_key.id
             };
             let close_call = CallDef::new("close_vault_for_liquidation", true, close_args);
             self.env().call_contract::<()>(branch_addr, close_call);
@@ -565,7 +572,7 @@ impl LiquidationEngine {
     fn calculate_liquidation(
         &self,
         collateral_id: CollateralId,
-        vault_owner: Address,
+        vault_key: VaultKey,
         collateral: U256,
         debt: U256,
         price: U256,
@@ -609,7 +616,7 @@ impl LiquidationEngine {
         let collateral_to_sp = actual_collateral_seized - collateral_to_liquidator;
 
         LiquidationResult {
-            vault_owner,
+            vault_key,
             collateral_id,
             debt_liquidated: debt_covered,
             collateral_seized: actual_collateral_seized,

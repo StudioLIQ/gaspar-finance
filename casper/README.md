@@ -132,13 +132,13 @@ Deployment records are saved to `deployments/casper/<network>-<date>.json`.
 When oracle status is not OK, the protocol enters safe_mode (ADR-001):
 
 **Allowed operations:**
-- Repay debt (adjustVault with debtDelta <= 0)
-- Add collateral (adjustVault with collateralDelta >= 0)
+- Repay debt (`adjustVault(vaultId, debtDelta <= 0)`)
+- Add collateral (`adjustVault(vaultId, collateralDelta >= 0)`)
 - Stability Pool deposit
 
 **Blocked operations:**
 - Open vault / borrow (debt increase)
-- Withdraw collateral / close vault
+- Withdraw collateral / close vault (`adjustVault(vaultId, withdraw)` / `closeVault(vaultId)`)
 - Liquidation / redemption
 - Stability Pool withdraw / claim
 
@@ -156,3 +156,21 @@ Do not hard-code ambiguous network values. All values must be confirmed via the 
 - [Oracle Spec](../docs/casper/spec/oracle.md)
 - [Collateral Spec](../docs/casper/spec/collateral.md)
 - [Ops Runbook](../docs/casper/ops/)
+
+## CDP CLI (multi-vault)
+
+`vault_id` is part of the vault identity (one owner can have multiple vaults per collateral branch).
+
+```bash
+# List vaults for an owner (defaults to .deployer from latest deployment record)
+./scripts/casper/cdp-vaults.sh testnet
+
+# Open a vault (collateral + borrow amounts are token units, 9 decimals max; borrow is scaled to 18 on-chain)
+./scripts/casper/cdp-open-vault.sh testnet "" /path/to/secret_key.pem cspr 10 100 300
+
+# Adjust a vault (add/withdraw collateral, borrow/repay debt)
+./scripts/casper/cdp-adjust-vault.sh testnet "" /path/to/secret_key.pem cspr 1 2 add 10 borrow
+
+# Close a vault
+./scripts/casper/cdp-close-vault.sh testnet "" /path/to/secret_key.pem cspr 1
+```

@@ -15,7 +15,7 @@
 use odra::prelude::*;
 use odra::casper_types::{U256, U512, RuntimeArgs, runtime_args};
 use odra::CallDef;
-use crate::types::{CollateralId, OracleStatus, SafeModeState};
+use crate::types::{CollateralId, VaultKey, OracleStatus, SafeModeState};
 use crate::errors::CdpError;
 use crate::styks_oracle::StyksOracle;
 
@@ -29,11 +29,11 @@ pub trait GUsd {
 /// Branch interface for vault queries and updates
 #[odra::external_contract]
 pub trait Branch {
-    fn get_collateral(&self, owner: Address) -> U256;
-    fn get_debt(&self, owner: Address) -> U256;
-    fn get_interest_rate_bps(&self, owner: Address) -> u32;
-    fn reduce_collateral_for_redemption(&mut self, owner: Address, collateral_amount: U256, debt_amount: U256);
-    fn get_sorted_vault_owners(&self, max_count: u32) -> Vec<Address>;
+    fn get_collateral(&self, owner: Address, vault_id: u64) -> U256;
+    fn get_debt(&self, owner: Address, vault_id: u64) -> U256;
+    fn get_interest_rate_bps(&self, owner: Address, vault_id: u64) -> u32;
+    fn reduce_collateral_for_redemption(&mut self, owner: Address, vault_id: u64, collateral_amount: U256, debt_amount: U256);
+    fn get_sorted_vault_owners(&self, max_count: u32) -> Vec<VaultKey>;
 }
 
 /// CEP-18 token interface for stCSPR
@@ -65,7 +65,7 @@ const MIN_REDEMPTION: u64 = 1_000_000_000_000_000_000; // 1 gUSD
 #[derive(Default)]
 pub struct RedemptionHint {
     /// First vault to try redeeming from
-    pub first_vault_owner: Option<Address>,
+    pub first_vault_owner: Option<VaultKey>,
     /// Expected interest rate of first vault
     pub expected_rate_bps: u32,
     /// Maximum number of vaults to process
@@ -75,8 +75,8 @@ pub struct RedemptionHint {
 /// Result of a single vault redemption
 #[odra::odra_type]
 pub struct VaultRedemptionResult {
-    /// Owner of the redeemed vault
-    pub vault_owner: Address,
+    /// Redeemed vault key
+    pub vault_key: VaultKey,
     /// Debt reduced from the vault
     pub debt_redeemed: U256,
     /// Collateral sent to redeemer
@@ -527,18 +527,19 @@ impl RedemptionEngine {
             "max_count" => max_iterations
         };
         let get_sorted_call = CallDef::new("get_sorted_vault_owners", false, get_sorted_args);
-        let vault_owners: Vec<Address> = self.env().call_contract(branch_addr, get_sorted_call);
+        let vault_keys: Vec<VaultKey> = self.env().call_contract(branch_addr, get_sorted_call);
 
         let mut vaults_touched = 0u32;
 
-        for owner in vault_owners {
+        for vault_key in vault_keys {
             if csprusd_remaining.is_zero() || collateral_remaining.is_zero() {
                 break;
             }
 
             // Get vault debt
             let get_debt_args = runtime_args! {
-                "owner" => owner
+                "owner" => vault_key.owner,
+                "vault_id" => vault_key.id
             };
             let get_debt_call = CallDef::new("get_debt", false, get_debt_args);
             let vault_debt: U256 = self.env().call_contract(branch_addr, get_debt_call);
@@ -549,7 +550,8 @@ impl RedemptionEngine {
 
             // Get vault collateral
             let get_coll_args = runtime_args! {
-                "owner" => owner
+                "owner" => vault_key.owner,
+                "vault_id" => vault_key.id
             };
             let get_coll_call = CallDef::new("get_collateral", false, get_coll_args);
             let vault_collateral: U256 = self.env().call_contract(branch_addr, get_coll_call);
@@ -591,7 +593,8 @@ impl RedemptionEngine {
 
             // Call branch to reduce vault collateral and debt
             let reduce_args = runtime_args! {
-                "owner" => owner,
+                "owner" => vault_key.owner,
+                "vault_id" => vault_key.id,
                 "collateral_amount" => actual_collateral,
                 "debt_amount" => actual_debt
             };

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useCasperWallet } from './useCasperWallet';
 import {
-  getUserVault,
+  getUserVaults,
   getBranchStatus,
   getCollateralPrice,
   getAccountCsprBalance,
@@ -52,8 +52,8 @@ export interface UserBalances {
 // CDP State
 export interface CdpState {
   // Vaults
-  csprVault: VaultInfo | null;
-  scsprVault: VaultInfo | null;
+  csprVaults: VaultInfo[];
+  scsprVaults: VaultInfo[];
 
   // Branch stats
   csprBranch: BranchStatus | null;
@@ -90,6 +90,7 @@ export interface CdpActions {
   // Adjust vault
   adjustVault: (
     collateralType: CollateralType,
+    vaultId: bigint,
     collateralDelta: string,
     isCollateralWithdraw: boolean,
     debtDelta: string,
@@ -97,7 +98,7 @@ export interface CdpActions {
   ) => Promise<boolean>;
 
   // Close vault
-  closeVault: (collateralType: CollateralType) => Promise<boolean>;
+  closeVault: (collateralType: CollateralType, vaultId: bigint) => Promise<boolean>;
 
   // Helpers
   previewOpenVault: (
@@ -120,8 +121,8 @@ export function useCdp(): CdpState & CdpActions {
   const { isConnected, publicKey, signDeploy } = useCasperWallet();
 
   // State
-  const [csprVault, setCsprVault] = useState<VaultInfo | null>(null);
-  const [scsprVault, setScsprVault] = useState<VaultInfo | null>(null);
+  const [csprVaults, setCsprVaults] = useState<VaultInfo[]>([]);
+  const [scsprVaults, setScsprVaults] = useState<VaultInfo[]>([]);
   const [csprBranch, setCsprBranch] = useState<BranchStatus | null>(null);
   const [scsprBranch, setScsprBranch] = useState<BranchStatus | null>(null);
   const [csprPrice, setCsprPrice] = useState<bigint>(BigInt('20000000000000000'));
@@ -158,35 +159,31 @@ export function useCdp(): CdpState & CdpActions {
       // Fetch user-specific data
       if (isConnected && publicKey) {
         console.log('[CDP] refresh - Fetching user data for:', publicKey);
-        const [csprVaultData, scsprVaultData, csprBalance, lstBalance, gusdBalance] =
+        const [csprVaultsData, scsprVaultsData, csprBalance, lstBalance, gusdBalance] =
           await Promise.all([
-            getUserVault(publicKey, 'cspr'),
-            getUserVault(publicKey, 'scspr'),
+            getUserVaults(publicKey, 'cspr'),
+            getUserVaults(publicKey, 'scspr'),
             getAccountCsprBalance(publicKey),
             getLstBalance(publicKey),
             getGusdBalance(publicKey),
           ]);
 
         console.log('[CDP] refresh - User vault data:', {
-          csprVault: csprVaultData ? {
-            collateral: csprVaultData.vault.collateral.toString(),
-            debt: csprVaultData.vault.debt.toString(),
-            icrBps: csprVaultData.icrBps,
-          } : null,
-          scsprVault: scsprVaultData ? 'exists' : null,
+          csprVaultCount: csprVaultsData.length,
+          scsprVaultCount: scsprVaultsData.length,
           csprBranchVaultCount: csprBranchData?.vaultCount,
         });
 
-        setCsprVault(csprVaultData);
-        setScsprVault(scsprVaultData);
+        setCsprVaults(csprVaultsData);
+        setScsprVaults(scsprVaultsData);
         setBalances({
           cspr: csprBalance,
           scspr: lstBalance?.scsprBalance ?? BigInt(0),
           gusd: gusdBalance,
         });
       } else {
-        setCsprVault(null);
-        setScsprVault(null);
+        setCsprVaults([]);
+        setScsprVaults([]);
         setBalances({ cspr: BigInt(0), scspr: BigInt(0), gusd: BigInt(0) });
       }
     } catch (error) {
@@ -377,7 +374,7 @@ export function useCdp(): CdpState & CdpActions {
               console.log('[CDP] openVault - Transaction succeeded, refreshing data...');
               setTxStatus('success');
               await refresh();
-              console.log('[CDP] openVault - Refresh complete, csprVault:', csprVault);
+              console.log('[CDP] openVault - Refresh complete');
               return true;
             } else if (status === 'error') {
               console.error('[CDP] openVault - Transaction failed on-chain');
@@ -501,6 +498,7 @@ export function useCdp(): CdpState & CdpActions {
   const adjustVault = useCallback(
     async (
       collateralType: CollateralType,
+      vaultId: bigint,
       collateralDelta: string,
       isCollateralWithdraw: boolean,
       debtDelta: string,
@@ -636,6 +634,7 @@ export function useCdp(): CdpState & CdpActions {
         // Step 3: Call adjust_vault
         const args: DeployArg[] = [
           { name: 'collateral_id', clType: 'U8', value: collateralType === 'cspr' ? '0' : '1' },
+          { name: 'vault_id', clType: 'U64', value: vaultId.toString() },
           { name: 'collateral_delta', clType: 'U256', value: collateralMotes.toString() },
           { name: 'collateral_is_withdraw', clType: 'Bool', value: isCollateralWithdraw.toString() },
           { name: 'debt_delta', clType: 'U256', value: debtAmount.toString() },
@@ -689,14 +688,17 @@ export function useCdp(): CdpState & CdpActions {
 
   // Close vault - requires gUSD approval to repay debt
   const closeVault = useCallback(
-    async (collateralType: CollateralType): Promise<boolean> => {
+    async (collateralType: CollateralType, vaultId: bigint): Promise<boolean> => {
       if (!isConnected || !publicKey) {
         setTxError('Wallet not connected');
         return false;
       }
 
       // Get the vault to know how much debt to approve
-      const vault = collateralType === 'cspr' ? csprVault : scsprVault;
+      const vault =
+        collateralType === 'cspr'
+          ? csprVaults.find((v) => v.vaultId === vaultId)
+          : scsprVaults.find((v) => v.vaultId === vaultId);
       if (!vault) {
         setTxError('No vault found');
         return false;
@@ -771,6 +773,7 @@ export function useCdp(): CdpState & CdpActions {
         // Step 2: Close vault
         const args: DeployArg[] = [
           { name: 'collateral_id', clType: 'U8', value: collateralType === 'cspr' ? '0' : '1' },
+          { name: 'vault_id', clType: 'U64', value: vaultId.toString() },
         ];
 
         const deployJson = buildContractCallDeploy(publicKey, {
@@ -815,13 +818,13 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
     },
-    [isConnected, publicKey, csprVault, scsprVault, signDeploy, refresh]
+    [isConnected, publicKey, csprVaults, scsprVaults, signDeploy, refresh]
   );
 
   return {
     // State
-    csprVault,
-    scsprVault,
+    csprVaults,
+    scsprVaults,
     csprBranch,
     scsprBranch,
     csprPrice,

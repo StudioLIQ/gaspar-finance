@@ -38,6 +38,9 @@ export function CdpVaultCard({
   const { isConnected } = useCasperWallet();
 
   const collateralLabel = collateralType === 'cspr' ? 'CSPR' : 'stCSPR';
+  const vaultTitle = vault
+    ? `My ${collateralLabel} Vault #${vault.vaultId.toString()}`
+    : `My ${collateralLabel} Vault`;
   const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
 
   // Format price for display (18 decimals -> USD)
@@ -67,7 +70,7 @@ export function CdpVaultCard({
   if (!isConnected) {
     return (
       <Card
-        title={`My ${collateralLabel} Vault`}
+        title={vaultTitle}
         subtitle="Connect wallet to view"
       >
         <div className="text-center py-8 text-gray-500">
@@ -79,7 +82,7 @@ export function CdpVaultCard({
 
   if (isLoading) {
     return (
-      <Card title={`My ${collateralLabel} Vault`} subtitle="Loading...">
+      <Card title={vaultTitle} subtitle="Loading...">
         <div className="space-y-3">
           <div className="animate-shimmer rounded-md bg-gray-100 h-8 w-full" />
           <div className="animate-shimmer rounded-md bg-gray-100 h-8 w-full" />
@@ -92,7 +95,7 @@ export function CdpVaultCard({
   if (!vault) {
     return (
       <Card
-        title={`My ${collateralLabel} Vault`}
+        title={vaultTitle}
         subtitle="No active vault"
       >
         <div className="text-center py-8">
@@ -107,7 +110,7 @@ export function CdpVaultCard({
 
   return (
     <Card
-      title={`My ${collateralLabel} Vault`}
+      title={vaultTitle}
       subtitle={`CR: ${(vault.icrBps / 100).toFixed(1)}%`}
     >
       <div className="space-y-4">

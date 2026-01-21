@@ -61,6 +61,28 @@ pub struct VaultData {
     pub last_accrual_timestamp: u64,
 }
 
+/// Unique vault identifier within a collateral branch.
+///
+/// A vault is identified by `(owner, id)` so a single owner can open multiple vaults.
+#[odra::odra_type]
+#[derive(Copy, PartialEq, Eq)]
+pub struct VaultKey {
+    /// Owner address
+    pub owner: Address,
+    /// Vault id (unique per owner, per collateral branch)
+    pub id: u64,
+}
+
+/// Index key for per-user vault id list.
+#[odra::odra_type]
+#[derive(Copy, PartialEq, Eq)]
+pub struct UserVaultIndex {
+    /// Owner address
+    pub owner: Address,
+    /// 0-based index into the owner's active vault list
+    pub index: u64,
+}
+
 /// Interest rate bounds (configurable)
 #[odra::odra_type]
 pub struct InterestRateBounds {

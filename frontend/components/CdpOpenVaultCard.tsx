@@ -24,7 +24,6 @@ interface CdpOpenVaultCardProps {
   collateralType: CollateralType;
   collateralPrice: bigint;
   balances: UserBalances;
-  hasExistingVault: boolean;
   txStatus: TxStatus;
   txError: string | null;
   onOpenVault: (
@@ -52,7 +51,6 @@ export function CdpOpenVaultCard({
   collateralType,
   collateralPrice,
   balances,
-  hasExistingVault,
   txStatus,
   txError,
   onOpenVault,
@@ -127,21 +125,7 @@ export function CdpOpenVaultCard({
     return 'text-red-600';
   };
 
-  const canOpen = isConnected && !hasExistingVault && preview?.isValid && !isProcessing;
-
-  if (hasExistingVault) {
-    return (
-      <Card
-        title={`Open ${collateralLabel} Vault`}
-        subtitle="You already have a vault"
-      >
-        <div className="text-center py-8 text-gray-500">
-          <p>You already have an active {collateralLabel} vault.</p>
-          <p className="text-sm mt-2">Close your existing vault or adjust it instead.</p>
-        </div>
-      </Card>
-    );
-  }
+  const canOpen = isConnected && preview?.isValid && !isProcessing;
 
   return (
     <Card
