@@ -8,6 +8,7 @@ import {
   getCollateralPrice,
   getAccountCsprBalance,
   getLstBalance,
+  getStabilityPoolStats,
   getGusdBalance,
   formatCsprAmount,
   formatGusdAmount,
@@ -21,6 +22,7 @@ import {
   type VaultInfo,
   type BranchStatus,
   type CollateralType,
+  type StabilityPoolProtocolStats,
 } from '@/lib/casperRpc';
 import { CONTRACTS } from '@/lib/config';
 import {
@@ -58,6 +60,9 @@ export interface CdpState {
   // Branch stats
   csprBranch: BranchStatus | null;
   scsprBranch: BranchStatus | null;
+
+  // Stability pool stats (collateral held outside vaults)
+  stabilityPoolStats: StabilityPoolProtocolStats | null;
 
   // Prices
   csprPrice: bigint;
@@ -132,6 +137,7 @@ export function useCdp(): CdpState & CdpActions {
   const [scsprVaults, setScsprVaults] = useState<VaultInfo[]>([]);
   const [csprBranch, setCsprBranch] = useState<BranchStatus | null>(null);
   const [scsprBranch, setScsprBranch] = useState<BranchStatus | null>(null);
+  const [stabilityPoolStats, setStabilityPoolStats] = useState<StabilityPoolProtocolStats | null>(null);
   const [csprPrice, setCsprPrice] = useState<bigint>(BigInt('20000000000000000'));
   const [scsprPrice, setScsprPrice] = useState<bigint>(BigInt('20000000000000000'));
   const [balances, setBalances] = useState<UserBalances>({
@@ -151,17 +157,25 @@ export function useCdp(): CdpState & CdpActions {
 
     try {
       // Fetch prices and branch stats
-      const [csprPriceData, scsprPriceData, csprBranchData, scsprBranchData] = await Promise.all([
+      const [
+        csprPriceData,
+        scsprPriceData,
+        csprBranchData,
+        scsprBranchData,
+        stabilityPoolStatsData,
+      ] = await Promise.all([
         getCollateralPrice('cspr'),
         getCollateralPrice('scspr'),
         getBranchStatus('cspr'),
         getBranchStatus('scspr'),
+        getStabilityPoolStats(),
       ]);
 
       setCsprPrice(csprPriceData);
       setScsprPrice(scsprPriceData);
       setCsprBranch(csprBranchData);
       setScsprBranch(scsprBranchData);
+      setStabilityPoolStats(stabilityPoolStatsData);
 
       // Fetch user-specific data
       if (isConnected && publicKey) {
@@ -919,6 +933,7 @@ export function useCdp(): CdpState & CdpActions {
     scsprVaults,
     csprBranch,
     scsprBranch,
+    stabilityPoolStats,
     csprPrice,
     scsprPrice,
     balances,
@@ -941,4 +956,4 @@ export function useCdp(): CdpState & CdpActions {
 
 // Re-exports
 export { formatCsprAmount, formatGusdAmount, CDP_CONSTANTS };
-export type { VaultInfo, BranchStatus, CollateralType };
+export type { VaultInfo, BranchStatus, CollateralType, StabilityPoolProtocolStats };

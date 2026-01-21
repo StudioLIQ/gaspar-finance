@@ -1,11 +1,17 @@
 'use client';
 
 import { Card } from '@/components/ui/Card';
-import { formatCsprAmount, formatGusdAmount, type BranchStatus } from '@/hooks/useCdp';
+import {
+  formatCsprAmount,
+  formatGusdAmount,
+  type BranchStatus,
+  type StabilityPoolProtocolStats,
+} from '@/hooks/useCdp';
 
 interface CdpStatsCardProps {
   csprBranch: BranchStatus | null;
   scsprBranch: BranchStatus | null;
+  stabilityPoolStats: StabilityPoolProtocolStats | null;
   csprPrice: bigint;
   scsprPrice: bigint;
   isLoading: boolean;
@@ -14,6 +20,7 @@ interface CdpStatsCardProps {
 export function CdpStatsCard({
   csprBranch,
   scsprBranch,
+  stabilityPoolStats,
   csprPrice,
   scsprPrice,
   isLoading,
@@ -37,8 +44,11 @@ export function CdpStatsCard({
   const totalVaults = (csprBranch?.vaultCount ?? 0) + (scsprBranch?.vaultCount ?? 0);
 
   // Calculate TVL in USD
-  const csprValueUsd = (totalCollateralCspr * csprPrice) / BigInt(1e9);
-  const scsprValueUsd = (totalCollateralScspr * scsprPrice) / BigInt(1e9);
+  const spCollateralCspr = stabilityPoolStats?.totalCsprCollateral ?? BigInt(0);
+  const spCollateralScspr = stabilityPoolStats?.totalScsprCollateral ?? BigInt(0);
+
+  const csprValueUsd = ((totalCollateralCspr + spCollateralCspr) * csprPrice) / BigInt(1e9);
+  const scsprValueUsd = ((totalCollateralScspr + spCollateralScspr) * scsprPrice) / BigInt(1e9);
   const totalTvlUsd = csprValueUsd + scsprValueUsd;
   const totalDebt = totalDebtCspr + totalDebtScspr;
 
@@ -51,7 +61,10 @@ export function CdpStatsCard({
             Total Value Locked
           </p>
           <p className="text-2xl font-bold text-primary-900">
-            ${(Number(totalTvlUsd) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            ${formatGusdAmount(totalTvlUsd, 0)}
+          </p>
+          <p className="text-xs text-primary-700/80 mt-1">
+            Includes vault + Stability Pool collateral
           </p>
         </div>
 
@@ -75,7 +88,7 @@ export function CdpStatsCard({
         {/* Branch Details */}
         <div className="border-t border-gray-100 pt-4">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">
-            By Collateral
+            Vault Collateral
           </p>
 
           {/* CSPR Branch */}

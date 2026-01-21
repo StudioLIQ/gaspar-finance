@@ -21,6 +21,7 @@ export default function Home() {
     scsprVaults,
     csprBranch,
     scsprBranch,
+    stabilityPoolStats,
     csprPrice,
     scsprPrice,
     balances,
@@ -178,6 +179,7 @@ export default function Home() {
             <CdpStatsCard
               csprBranch={csprBranch}
               scsprBranch={scsprBranch}
+              stabilityPoolStats={stabilityPoolStats}
               csprPrice={csprPrice}
               scsprPrice={scsprPrice}
               isLoading={isLoading}
