@@ -242,6 +242,13 @@ print_odra_u256 "ybToken.total_shares" "$YB_TOTAL_SHARES_PARSED"
 print_odra_u64 "ybToken.last_sync_timestamp" "$YB_LAST_SYNC_PARSED"
 echo ""
 
+echo "=== ybToken CEP-18 named_keys (for explorers) ==="
+read_var_by_name "ybToken" "$YBTOKEN_HASH" "name"
+read_var_by_name "ybToken" "$YBTOKEN_HASH" "symbol"
+read_var_by_name "ybToken" "$YBTOKEN_HASH" "decimals"
+read_var_by_name "ybToken" "$YBTOKEN_HASH" "total_supply"
+echo ""
+
 dump_named_keys "WithdrawQueue" "$QUEUE_HASH"
 WQ_CONFIG_PARSED=$(odra_var_parsed "$QUEUE_HASH" "$QUEUE_CONFIG_IDX")
 WQ_NEXT_PARSED=$(odra_var_parsed "$QUEUE_HASH" "$QUEUE_NEXT_REQUEST_ID_IDX")
@@ -253,5 +260,6 @@ echo ""
 
 echo "=== Notes ==="
 echo "- Odra stores Var<T> in a single dictionary named 'state' (hashed keys). Named keys may not include fields."
+echo "- For cspr.live to recognize stCSPR as CEP-18, the ybToken contract should expose named_keys: name/symbol/decimals/total_supply and dictionaries: balances/allowances."
 echo "- Frontend reads ybToken/WithdrawQueue via Odra dictionary queries in frontend/lib/casperRpc.ts."
 echo ""

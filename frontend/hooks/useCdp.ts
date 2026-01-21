@@ -157,6 +157,7 @@ export function useCdp(): CdpState & CdpActions {
 
       // Fetch user-specific data
       if (isConnected && publicKey) {
+        console.log('[CDP] refresh - Fetching user data for:', publicKey);
         const [csprVaultData, scsprVaultData, csprBalance, lstBalance, gusdBalance] =
           await Promise.all([
             getUserVault(publicKey, 'cspr'),
@@ -165,6 +166,16 @@ export function useCdp(): CdpState & CdpActions {
             getLstBalance(publicKey),
             getGusdBalance(publicKey),
           ]);
+
+        console.log('[CDP] refresh - User vault data:', {
+          csprVault: csprVaultData ? {
+            collateral: csprVaultData.vault.collateral.toString(),
+            debt: csprVaultData.vault.debt.toString(),
+            icrBps: csprVaultData.icrBps,
+          } : null,
+          scsprVault: scsprVaultData ? 'exists' : null,
+          csprBranchVaultCount: csprBranchData?.vaultCount,
+        });
 
         setCsprVault(csprVaultData);
         setScsprVault(scsprVaultData);
@@ -288,6 +299,19 @@ export function useCdp(): CdpState & CdpActions {
       try {
         const routerHash = CONTRACTS.router;
         const routerPackageHash = CONTRACTS.routerPackage;
+        const branchCsprHash = CONTRACTS.branchCspr;
+
+        // Debug logging for contract addresses
+        console.log('[CDP] openVault - Contract addresses:', {
+          routerHash,
+          routerPackageHash,
+          branchCsprHash,
+          publicKey,
+          collateralType,
+          collateralMotes: collateralMotes.toString(),
+          interestRateBps,
+        });
+
         if (!routerHash || routerHash === 'null') {
           setTxError('Router contract not deployed');
           setTxStatus('error');
@@ -342,18 +366,23 @@ export function useCdp(): CdpState & CdpActions {
           setTxStatus('pending');
           const deployHash = await submitDeploy(signedDeploy);
           setTxHash(deployHash);
+          console.log('[CDP] openVault - Deploy submitted:', deployHash);
 
           // Poll for status
           for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
             const status = await getDeployStatus(deployHash);
+            console.log(`[CDP] openVault - Poll ${i + 1}/${DEPLOY_POLL_MAX_ATTEMPTS}: ${status}`);
             if (status === 'success') {
+              console.log('[CDP] openVault - Transaction succeeded, refreshing data...');
               setTxStatus('success');
               await refresh();
+              console.log('[CDP] openVault - Refresh complete, csprVault:', csprVault);
               return true;
             } else if (status === 'error') {
+              console.error('[CDP] openVault - Transaction failed on-chain');
               setTxStatus('error');
-              setTxError('Transaction failed on-chain');
+              setTxError('Transaction failed on-chain. Check explorer for details.');
               return false;
             }
           }

@@ -67,13 +67,7 @@ fi
 # Build WASM if requested
 if [[ "${BUILD_WASM}" == "true" ]]; then
     echo ">>> Building WASM artifacts..."
-    cargo build --release --target wasm32-unknown-unknown
-
-    mkdir -p "${CASPER_DIR}/wasm"
-    find "${CASPER_DIR}/target/wasm32-unknown-unknown/release" -name "*.wasm" -exec cp {} "${CASPER_DIR}/wasm/" \; 2>/dev/null || true
-
-    echo ">>> WASM artifacts in ${CASPER_DIR}/wasm/:"
-    ls -la "${CASPER_DIR}/wasm/"*.wasm 2>/dev/null || echo "No WASM files produced yet (contracts need entry points)"
+    make wasm
 fi
 
 echo ""

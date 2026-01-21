@@ -23,6 +23,7 @@ build:
 
 # Build WASM artifacts for deployment
 wasm:
+	@./scripts/build-wasm-modules.sh --release
 	$(CARGO) build --release --target wasm32-unknown-unknown -p cspr-cdp-contracts --lib
 	@mkdir -p $(WASM_DIR)
 	@cp $(TARGET_DIR)/wasm32-unknown-unknown/release/*.wasm $(WASM_DIR)/ 2>/dev/null || true
