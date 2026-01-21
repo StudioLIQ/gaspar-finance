@@ -218,7 +218,7 @@ export function CdpAdjustVaultCard({
     return null;
   }
 
-  const nextCrPct = preview && 'icrBps' in preview ? (preview.icrBps / 100).toFixed(1) : null;
+  const nextCrPct = preview && 'icrBps' in preview && preview.icrBps != null ? (preview.icrBps / 100).toFixed(1) : null;
   const nextLiq = preview && 'liquidationPrice' in preview ? preview.liquidationPrice : null;
 
   return (

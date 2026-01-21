@@ -8,7 +8,7 @@ import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { useBalances } from '@/hooks/useBalances';
 import { SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
-import { formatCsprAmount } from '@/lib/casperRpc';
+import { formatCsprAmount, formatGusdAmount } from '@/lib/casperRpc';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
@@ -95,7 +95,7 @@ export function Header() {
                 <span className="text-gray-300">|</span>
                 <span className="text-gray-600">
                   <span className="font-medium text-gray-900">
-                    {isLoadingBalances ? '...' : formatCsprAmount(balances.gusd ?? BigInt(0))}
+                    {isLoadingBalances ? '...' : formatGusdAmount(balances.gusd ?? BigInt(0))}
                   </span>
                   {' '}gUSD
                 </span>
