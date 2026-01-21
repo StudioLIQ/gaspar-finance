@@ -217,20 +217,20 @@ const ODRA_FIELD_INDEX = {
   SP_SAFE_MODE: 15,
 
   // Branch (CSPR/SCSPR common prefix): registry(1), router(2), vaults(3), sorted_vaults(4), sorted_head(5), sorted_tail(6),
-  // total_collateral(7), total_debt(8), vault_count(9), safe_mode(10), last_good_price(11), ...
+  // total_collateral(7), total_debt(8), vault_count(9), last_good_price(10), ...
   BRANCH_VAULTS: 3,  // Mapping<VaultKey(owner+id), VaultData>
   BRANCH_TOTAL_COLLATERAL: 7,
   BRANCH_TOTAL_DEBT: 8,
   BRANCH_VAULT_COUNT: 9,
-  BRANCH_SAFE_MODE: 10,
+  BRANCH_LAST_GOOD_PRICE: 10,
 
   // BranchCspr tail fields (multi-vault)
-  BRANCH_CSPR_USER_VAULT_COUNT: 15,
-  BRANCH_CSPR_USER_VAULT_IDS: 16, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
+  BRANCH_CSPR_USER_VAULT_COUNT: 12,
+  BRANCH_CSPR_USER_VAULT_IDS: 13, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
 
   // BranchScspr tail fields (multi-vault)
-  BRANCH_SCSPR_USER_VAULT_COUNT: 17,
-  BRANCH_SCSPR_USER_VAULT_IDS: 18, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
+  BRANCH_SCSPR_USER_VAULT_COUNT: 13,
+  BRANCH_SCSPR_USER_VAULT_IDS: 14, // Mapping<UserVaultIndex(owner+index), u64 vault_id>
 
   // RedemptionEngine: registry(1), router(2), stablecoin(3), treasury(4), styks_oracle(5),
   // scspr_ybtoken(6), branch_cspr(7), branch_scspr(8), scspr_token(9),

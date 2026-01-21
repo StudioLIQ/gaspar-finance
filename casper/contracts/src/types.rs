@@ -65,7 +65,7 @@ pub struct VaultData {
 ///
 /// A vault is identified by `(owner, id)` so a single owner can open multiple vaults.
 #[odra::odra_type]
-#[derive(Copy, PartialEq, Eq)]
+#[derive(Copy)]
 pub struct VaultKey {
     /// Owner address
     pub owner: Address,
@@ -75,7 +75,7 @@ pub struct VaultKey {
 
 /// Index key for per-user vault id list.
 #[odra::odra_type]
-#[derive(Copy, PartialEq, Eq)]
+#[derive(Copy)]
 pub struct UserVaultIndex {
     /// Owner address
     pub owner: Address,

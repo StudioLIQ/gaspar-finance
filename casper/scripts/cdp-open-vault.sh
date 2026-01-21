@@ -331,12 +331,12 @@ case "$COLLATERAL_KIND" in
   cspr|CSPR|0)
     COLLATERAL_ID="0"
     BRANCH_HASH="$BRANCH_CSPR_HASH"
-    NEXT_ID_IDX="14"
+    NEXT_ID_IDX="11"
     ;;
   scspr|SCSPR|1)
     COLLATERAL_ID="1"
     BRANCH_HASH="$BRANCH_SCSPR_HASH"
-    NEXT_ID_IDX="16"
+    NEXT_ID_IDX="12"
     ;;
   *)
     echo "ERROR: collateral must be cspr or scspr"
@@ -401,4 +401,3 @@ call_contract "$ROUTER_HASH" "open_vault" "$TRANSFERRED_VALUE" \
 echo ""
 echo "✓ Submitted and executed."
 echo "  Next: ./scripts/casper/cdp-vaults.sh $NETWORK \"$DEPLOY_FILE\" $ACCOUNT_HASH"
-

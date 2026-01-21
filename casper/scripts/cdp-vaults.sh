@@ -282,8 +282,7 @@ print_branch_vaults() {
 }
 
 # Field indices (Odra, 1-indexed) for multi-vault branches.
-# BranchCSPR tail: next_vault_id(14), user_vault_count(15), user_vault_ids(16)
-# BranchSCSPR tail: next_vault_id(16), user_vault_count(17), user_vault_ids(18)
-print_branch_vaults "CSPR Vaults" "$BRANCH_CSPR_HASH" 15 16 3
-print_branch_vaults "stCSPR Vaults" "$BRANCH_SCSPR_HASH" 17 18 3
-
+# BranchCSPR tail: last_good_price(10), next_vault_id(11), user_vault_count(12), user_vault_ids(13), vault_indices(14)
+# BranchSCSPR tail: last_good_price(10), exchange_rate(11), next_vault_id(12), user_vault_count(13), user_vault_ids(14), vault_indices(15)
+print_branch_vaults "CSPR Vaults" "$BRANCH_CSPR_HASH" 12 13 3
+print_branch_vaults "stCSPR Vaults" "$BRANCH_SCSPR_HASH" 13 14 3

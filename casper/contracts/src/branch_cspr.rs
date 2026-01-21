@@ -5,7 +5,7 @@ use odra::casper_types::U256;
 use crate::types::{CollateralId, VaultData, VaultKey, UserVaultIndex, SafeModeState, OracleStatus};
 use crate::interfaces::{VaultInfo, BranchStatus, AdjustVaultParams};
 use crate::errors::CdpError;
-use crate::interest::{accrue_interest, InterestRateConfig, validate_interest_rate};
+use crate::interest::accrue_interest;
 
 /// Minimum Collateralization Ratio in basis points (110% = 11000 bps)
 const MCR_BPS: u32 = 11000;
@@ -52,14 +52,8 @@ pub struct BranchCspr {
     total_debt: Var<U256>,
     /// Number of active vaults
     vault_count: Var<u64>,
-    /// Local safe mode state
-    safe_mode: Var<SafeModeState>,
     /// Last known good price (cached for safe mode)
     last_good_price: Var<U256>,
-    /// Interest rate configuration
-    interest_config: Var<InterestRateConfig>,
-    /// Total accrued interest (for protocol accounting)
-    total_accrued_interest: Var<U256>,
     /// Next vault id per owner (starts at 1)
     next_vault_id: Mapping<Address, u64>,
     /// Active vault count per owner
@@ -82,13 +76,6 @@ impl BranchCspr {
         self.sorted_head.set(None);
         self.sorted_tail.set(None);
         self.last_good_price.set(U256::from(PRICE_SCALE)); // Default 1:1 price
-        self.interest_config.set(InterestRateConfig::default());
-        self.total_accrued_interest.set(U256::zero());
-        self.safe_mode.set(SafeModeState {
-            is_active: false,
-            triggered_at: 0,
-            reason: OracleStatus::Ok,
-        });
     }
 
     /// Open a new vault with CSPR collateral.
@@ -103,15 +90,6 @@ impl BranchCspr {
     ) -> u64 {
         self.require_router();
         let caller = owner;
-
-        // Check safe mode - no new vaults allowed
-        self.require_not_safe_mode();
-
-        // Validate interest rate against config
-        let interest_config = self.interest_config.get().unwrap_or_default();
-        if !validate_interest_rate(interest_rate_bps, &interest_config) {
-            self.env().revert(CdpError::InterestRateOutOfBounds);
-        }
 
         // Check minimum debt
         let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
@@ -210,16 +188,10 @@ impl BranchCspr {
 
         // Track total accrued interest
         if accrual.interest_accrued > U256::zero() {
-            let total = self.total_accrued_interest.get().unwrap_or(U256::zero());
-            self.total_accrued_interest.set(total + accrual.interest_accrued);
-
             // Update total debt with interest
             let current_debt = self.total_debt.get().unwrap_or(U256::zero());
             self.total_debt.set(current_debt + accrual.interest_accrued);
         }
-
-        // Check safe mode restrictions
-        self.check_safe_mode_adjustment(&params);
 
         // Calculate new collateral
         let new_collateral = if params.collateral_is_withdraw {
@@ -244,7 +216,7 @@ impl BranchCspr {
         // Check if this results in closing the vault
         if new_collateral.is_zero() && new_debt.is_zero() {
             // Effectively closing the vault
-            self.close_vault_internal(caller, vault);
+            self.close_vault_internal(vault_key, vault);
             return;
         }
 
@@ -294,9 +266,6 @@ impl BranchCspr {
         self.require_router();
         let caller = owner;
         let vault_key = VaultKey { owner: caller, id: vault_id };
-
-        // Check safe mode - no vault closing allowed
-        self.require_not_safe_mode();
 
         let vault = match self.vaults.get(&vault_key) {
             Some(v) => v,
@@ -387,11 +356,11 @@ impl BranchCspr {
             total_collateral: self.total_collateral.get().unwrap_or(U256::zero()),
             total_debt: self.total_debt.get().unwrap_or(U256::zero()),
             vault_count: self.vault_count.get().unwrap_or(0),
-            safe_mode: self.safe_mode.get().unwrap_or(SafeModeState {
+            safe_mode: SafeModeState {
                 is_active: false,
                 triggered_at: 0,
                 reason: OracleStatus::Ok,
-            }),
+            },
         }
     }
 
@@ -484,11 +453,6 @@ impl BranchCspr {
     /// Get vault count
     pub fn get_vault_count(&self) -> u64 {
         self.vault_count.get().unwrap_or(0)
-    }
-
-    /// Check if safe mode is active
-    pub fn is_safe_mode_active(&self) -> bool {
-        self.safe_mode.get().map(|s| s.is_active).unwrap_or(false)
     }
 
     /// Reduce vault collateral and debt during redemption
@@ -631,84 +595,18 @@ impl BranchCspr {
         self.remove_vault_from_owner_list(vault_key);
     }
 
-    /// Trigger safe mode
-    pub fn trigger_safe_mode(&mut self, reason: OracleStatus) {
-        let state = SafeModeState {
-            is_active: true,
-            triggered_at: self.env().get_block_time(),
-            reason,
-        };
-        self.safe_mode.set(state);
-    }
-
-    /// Clear safe mode (requires external admin verification)
-    pub fn clear_safe_mode(&mut self) {
-        self.safe_mode.set(SafeModeState {
-            is_active: false,
-            triggered_at: 0,
-            reason: OracleStatus::Ok,
-        });
-    }
-
     /// Update last good price (called by oracle adapter)
     pub fn update_price(&mut self, price: U256) {
         self.last_good_price.set(price);
     }
 
-    /// Get total accrued interest (for protocol accounting)
-    pub fn get_total_accrued_interest(&self) -> U256 {
-        self.total_accrued_interest.get().unwrap_or(U256::zero())
-    }
-
-    /// Get interest rate configuration
-    pub fn get_interest_config(&self) -> InterestRateConfig {
-        self.interest_config.get().unwrap_or_default()
-    }
-
-    /// Update interest rate configuration (admin only)
-    pub fn set_interest_config(&mut self, config: InterestRateConfig) {
-        // TODO: Add admin access control
-        self.interest_config.set(config);
-    }
-
     // ========== Internal helpers ==========
-
-    fn require_not_safe_mode(&self) {
-        let state = self.safe_mode.get().unwrap_or(SafeModeState {
-            is_active: false,
-            triggered_at: 0,
-            reason: OracleStatus::Ok,
-        });
-        if state.is_active {
-            self.env().revert(CdpError::SafeModeActive);
-        }
-    }
 
     fn require_router(&self) {
         let caller = self.env().caller();
         let router = self.router.get().unwrap_or_else(|| self.env().self_address());
         if caller != router {
             self.env().revert(CdpError::UnauthorizedProtocol);
-        }
-    }
-
-    fn check_safe_mode_adjustment(&self, params: &AdjustVaultParams) {
-        let state = self.safe_mode.get().unwrap_or(SafeModeState {
-            is_active: false,
-            triggered_at: 0,
-            reason: OracleStatus::Ok,
-        });
-
-        if !state.is_active {
-            return;
-        }
-
-        // In safe mode: only allow adding collateral and repaying debt
-        let is_borrowing = !params.debt_is_repay && params.debt_delta > U256::zero();
-        let is_withdrawing = params.collateral_is_withdraw && params.collateral_delta > U256::zero();
-
-        if is_borrowing || is_withdrawing {
-            self.env().revert(CdpError::SafeModeActive);
         }
     }
 
