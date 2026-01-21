@@ -39,6 +39,11 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
+if ! command -v curl &> /dev/null; then
+    echo "ERROR: curl is required. Install curl or ensure it's on PATH."
+    exit 1
+fi
+
 NODE_ADDRESS=$(jq -r '.nodeAddress' "$DEPLOY_FILE")
 CHAIN_NAME=$(jq -r '.chainName' "$DEPLOY_FILE")
 
@@ -47,6 +52,43 @@ FRONTEND_NODE_ADDRESS="$NODE_ADDRESS"
 if [[ "$FRONTEND_NODE_ADDRESS" != */rpc ]]; then
     FRONTEND_NODE_ADDRESS="${FRONTEND_NODE_ADDRESS%/}/rpc"
 fi
+
+resolve_package_hash() {
+    local contract_hash="$1"
+    local current_pkg_hash="$2"
+    local label="$3"
+
+    if [[ -n "$current_pkg_hash" && "$current_pkg_hash" != "null" ]]; then
+        echo "$current_pkg_hash"
+        return 0
+    fi
+
+    if [[ -z "$contract_hash" || "$contract_hash" == "null" ]]; then
+        echo "null"
+        return 0
+    fi
+
+    echo "ℹ Resolving ${label} package hash from chain..." 1>&2
+
+    # query_global_state supports both Casper 1.x (Contract) and Casper 2.0 (AddressableEntity) formats.
+    # We keep failures non-fatal and fall back to "null".
+    local body
+    body=$(jq -n --arg key "$contract_hash" '{jsonrpc:"2.0",id:1,method:"query_global_state",params:{key:$key,state_identifier:null,path:[]}}')
+    local pkg
+    pkg=$(
+        curl -s -X POST -H 'Content-Type: application/json' --data "$body" "$FRONTEND_NODE_ADDRESS" \
+        | jq -r '.result.stored_value.Contract.contract_package_hash // .result.stored_value.AddressableEntity.package_hash // empty' \
+        || true
+    )
+
+    if [[ -z "$pkg" || "$pkg" == "null" ]]; then
+        echo "null"
+        return 0
+    fi
+
+    echo "$pkg"
+    return 0
+}
 
 # Extract contract hashes
 REGISTRY_HASH=$(jq -r '.contracts.registry.hash // "null"' "$DEPLOY_FILE")
@@ -64,6 +106,12 @@ BRANCH_SCSPR_HASH=$(jq -r '.contracts.branchSCSPR.hash // "null"' "$DEPLOY_FILE"
 SCSPR_YBTOKEN_HASH=$(jq -r '.contracts.scsprYbToken.hash // "null"' "$DEPLOY_FILE")
 SCSPR_YBTOKEN_PKG_HASH=$(jq -r '.contracts.scsprYbToken.package_hash // "null"' "$DEPLOY_FILE")
 WITHDRAW_QUEUE_HASH=$(jq -r '.contracts.withdrawQueue.hash // "null"' "$DEPLOY_FILE")
+
+# Some deployment records may omit package hashes. Resolve them from chain so the frontend can
+# perform payable calls via proxy_caller.wasm (router/ybToken) and other package-based calls.
+ROUTER_PKG_HASH=$(resolve_package_hash "$ROUTER_HASH" "$ROUTER_PKG_HASH" "Router")
+STABILITY_POOL_PKG_HASH=$(resolve_package_hash "$STABILITY_POOL_HASH" "$STABILITY_POOL_PKG_HASH" "StabilityPool")
+SCSPR_YBTOKEN_PKG_HASH=$(resolve_package_hash "$SCSPR_YBTOKEN_HASH" "$SCSPR_YBTOKEN_PKG_HASH" "ScsprYbToken")
 
 # Create frontend config
 mkdir -p "$CONFIG_DIR"
