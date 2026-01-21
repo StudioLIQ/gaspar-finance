@@ -690,6 +690,8 @@ name = "cspr-cdp-contracts"
 version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
+ "casper-contract",
+ "casper-types",
  "odra",
  "odra-build",
  "odra-casper-test-vm",

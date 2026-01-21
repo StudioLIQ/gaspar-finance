@@ -35,6 +35,11 @@ use crate::errors::CdpError;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 
+#[cfg(target_arch = "wasm32")]
+use casper_contract::contract_api::{runtime, storage};
+#[cfg(target_arch = "wasm32")]
+use odra::casper_types::URef;
+
 /// Scale factor for internal calculations (1e18)
 const SCALE: u128 = 1_000_000_000_000_000_000;
 /// Minimum deposit amount (1 CSPR in motes)
@@ -201,12 +206,14 @@ impl ScsprYbToken {
             deposits_paused: false,
             withdrawals_paused: false,
         });
-        self.env().init_dictionary(CEP18_BALANCES_DICT);
-        self.env().init_dictionary(CEP18_ALLOWANCES_DICT);
-        self.env().set_named_value(CEP18_NAME_KEY, String::from("stCSPR"));
-        self.env().set_named_value(CEP18_SYMBOL_KEY, String::from("stCSPR"));
-        self.env().set_named_value(CEP18_DECIMALS_KEY, DECIMALS);
-        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, U256::zero());
+        self.ensure_cep18_named_keys();
+    }
+
+    /// Upgrade hook (called automatically by Odra during contract upgrade).
+    ///
+    /// Backfills CEP-18 named keys/dictionaries for explorers/indexers.
+    pub fn upgrade(&mut self) {
+        self.ensure_cep18_named_keys();
     }
 
     // ===== CEP-18 Standard Functions =====
@@ -715,15 +722,36 @@ impl ScsprYbToken {
     fn set_balance_cep18(&self, owner: Address, amount: U256) {
         let key = Self::cep18_balance_key(owner);
         self.env().set_dictionary_value(CEP18_BALANCES_DICT, key.as_bytes(), amount);
+
+        // Native Casper dictionary update for Explorer
+        #[cfg(target_arch = "wasm32")]
+        if let Some(dict_uref) = self.get_dict_uref(CEP18_BALANCES_DICT) {
+            storage::dictionary_put(dict_uref, key.as_str(), amount);
+        }
     }
 
     fn set_allowance_cep18(&self, owner: Address, spender: Address, amount: U256) {
-        let key = Self::cep18_allowance_key(owner, spender);
-        self.env().set_dictionary_value(CEP18_ALLOWANCES_DICT, key.as_bytes(), amount);
+        let key = self.cep18_allowance_key(owner, spender);
+        self.env().set_dictionary_value(CEP18_ALLOWANCES_DICT, &key, amount);
+
+        // Native Casper dictionary update for Explorer
+        #[cfg(target_arch = "wasm32")]
+        if let Some(dict_uref) = self.get_dict_uref(CEP18_ALLOWANCES_DICT) {
+            // Convert [u8; 64] to string for dictionary key
+            let key_str = core::str::from_utf8(&key).unwrap_or("");
+            storage::dictionary_put(dict_uref, key_str, amount);
+        }
     }
 
     fn set_total_supply_cep18(&self, amount: U256) {
         self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, amount);
+
+        // Native Casper named key update for Explorer
+        #[cfg(target_arch = "wasm32")]
+        {
+            let uref = storage::new_uref(amount);
+            runtime::put_key(CEP18_TOTAL_SUPPLY_KEY, Key::URef(uref));
+        }
     }
 
     fn cep18_balance_key(owner: Address) -> String {
@@ -732,13 +760,68 @@ impl ScsprYbToken {
         BASE64_STANDARD.encode(bytes)
     }
 
-    fn cep18_allowance_key(owner: Address, spender: Address) -> String {
-        let owner_key = Key::from(owner);
-        let spender_key = Key::from(spender);
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&owner_key.to_bytes().unwrap_or_default());
-        bytes.extend_from_slice(&spender_key.to_bytes().unwrap_or_default());
-        BASE64_STANDARD.encode(bytes)
+    fn cep18_allowance_key(&self, owner: Address, spender: Address) -> [u8; 64] {
+        // CEP-18 allowance dictionary keys must be <= 64 bytes.
+        // Use blake2b(owner_bytes || spender_bytes) and hex-encode (64 chars).
+        let mut preimage = Vec::new();
+        preimage.extend_from_slice(&owner.to_bytes().unwrap_or_default());
+        preimage.extend_from_slice(&spender.to_bytes().unwrap_or_default());
+
+        let digest = self.env().hash(&preimage);
+        let mut key = [0u8; 64];
+        odra::utils::hex_to_slice(&digest, &mut key);
+        key
+    }
+
+    fn ensure_cep18_named_keys(&self) {
+        // Odra internal state management
+        self.env().init_dictionary(CEP18_BALANCES_DICT);
+        self.env().init_dictionary(CEP18_ALLOWANCES_DICT);
+        self.env().set_named_value(CEP18_NAME_KEY, self.name());
+        self.env().set_named_value(CEP18_SYMBOL_KEY, self.symbol());
+        self.env().set_named_value(CEP18_DECIMALS_KEY, self.decimals());
+        self.env().set_named_value(CEP18_TOTAL_SUPPLY_KEY, self.total_shares());
+
+        // Native Casper named keys for Explorer compatibility (WASM only)
+        #[cfg(target_arch = "wasm32")]
+        self.put_cep18_named_keys_native();
+    }
+
+    /// Create native Casper named keys for CEP-18 Explorer compatibility
+    #[cfg(target_arch = "wasm32")]
+    fn put_cep18_named_keys_native(&self) {
+        // Create balances dictionary if not exists
+        if runtime::get_key(CEP18_BALANCES_DICT).is_none() {
+            if let Ok(uref) = storage::new_dictionary(CEP18_BALANCES_DICT) {
+                runtime::put_key(CEP18_BALANCES_DICT, Key::URef(uref));
+            }
+        }
+
+        // Create allowances dictionary if not exists
+        if runtime::get_key(CEP18_ALLOWANCES_DICT).is_none() {
+            if let Ok(uref) = storage::new_dictionary(CEP18_ALLOWANCES_DICT) {
+                runtime::put_key(CEP18_ALLOWANCES_DICT, Key::URef(uref));
+            }
+        }
+
+        // Put metadata as named keys (create new URef for each)
+        let name_uref = storage::new_uref(self.name());
+        runtime::put_key(CEP18_NAME_KEY, Key::URef(name_uref));
+
+        let symbol_uref = storage::new_uref(self.symbol());
+        runtime::put_key(CEP18_SYMBOL_KEY, Key::URef(symbol_uref));
+
+        let decimals_uref = storage::new_uref(self.decimals());
+        runtime::put_key(CEP18_DECIMALS_KEY, Key::URef(decimals_uref));
+
+        let total_supply_uref = storage::new_uref(self.total_shares());
+        runtime::put_key(CEP18_TOTAL_SUPPLY_KEY, Key::URef(total_supply_uref));
+    }
+
+    /// Get or create dictionary URef for native Casper storage
+    #[cfg(target_arch = "wasm32")]
+    fn get_dict_uref(&self, name: &str) -> Option<URef> {
+        runtime::get_key(name).and_then(|key| key.into_uref())
     }
 
     fn require_admin(&self) {
