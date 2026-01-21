@@ -55,6 +55,7 @@ ROUTER_PKG_HASH=$(jq -r '.contracts.router.package_hash // "null"' "$DEPLOY_FILE
 STABLECOIN_HASH=$(jq -r '.contracts.stablecoin.hash // "null"' "$DEPLOY_FILE")
 ORACLE_HASH=$(jq -r '.contracts.oracleAdapter.hash // "null"' "$DEPLOY_FILE")
 STABILITY_POOL_HASH=$(jq -r '.contracts.stabilityPool.hash // "null"' "$DEPLOY_FILE")
+STABILITY_POOL_PKG_HASH=$(jq -r '.contracts.stabilityPool.package_hash // "null"' "$DEPLOY_FILE")
 LIQUIDATION_ENGINE_HASH=$(jq -r '.contracts.liquidationEngine.hash // "null"' "$DEPLOY_FILE")
 REDEMPTION_ENGINE_HASH=$(jq -r '.contracts.redemptionEngine.hash // "null"' "$DEPLOY_FILE")
 TREASURY_HASH=$(jq -r '.contracts.treasury.hash // "null"' "$DEPLOY_FILE")
@@ -80,6 +81,7 @@ cat > "$CONFIG_DIR/casper-${NETWORK}.json" << EOF
     "stablecoin": "$STABLECOIN_HASH",
     "oracleAdapter": "$ORACLE_HASH",
     "stabilityPool": "$STABILITY_POOL_HASH",
+    "stabilityPoolPackage": "$STABILITY_POOL_PKG_HASH",
     "liquidationEngine": "$LIQUIDATION_ENGINE_HASH",
     "redemptionEngine": "$REDEMPTION_ENGINE_HASH",
     "treasury": "$TREASURY_HASH",
@@ -120,6 +122,7 @@ NEXT_PUBLIC_ROUTER_PACKAGE_HASH=$ROUTER_PKG_HASH
 NEXT_PUBLIC_STABLECOIN_HASH=$STABLECOIN_HASH
 NEXT_PUBLIC_ORACLE_ADAPTER_HASH=$ORACLE_HASH
 NEXT_PUBLIC_STABILITY_POOL_HASH=$STABILITY_POOL_HASH
+NEXT_PUBLIC_STABILITY_POOL_PACKAGE_HASH=$STABILITY_POOL_PKG_HASH
 NEXT_PUBLIC_LIQUIDATION_ENGINE_HASH=$LIQUIDATION_ENGINE_HASH
 NEXT_PUBLIC_REDEMPTION_ENGINE_HASH=$REDEMPTION_ENGINE_HASH
 NEXT_PUBLIC_TREASURY_HASH=$TREASURY_HASH

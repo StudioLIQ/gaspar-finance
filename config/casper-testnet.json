@@ -9,6 +9,7 @@
     "stablecoin": "hash-770c8479031be8f9e2976b0489af7fa010aaa2bcd9e36135c6a2359f8304d3f3",
     "oracleAdapter": "hash-b0c1b73dd43c3dc9d7c5a1cfc5214e3395b75ad87e6dcde0a1f27ace89ce46fb",
     "stabilityPool": "hash-ae277384aad76d6061a50fff022290357d14ec5aa26d7fc8899c20203307d7ca",
+    "stabilityPoolPackage": "contract-package-34e119c53a497ae3a7f47cec964f3449c168505cb18bd7f674497859c439f04e",
     "liquidationEngine": "hash-6d3d7cf48656e4e1c49f30ebc08a71ddf32eda69e95dba10589c98c438d86e0d",
     "redemptionEngine": "hash-fbfad4176f0d6dde12578550c569dcc841d252b5cd91983f8489c4d647610e76",
     "treasury": "hash-775afb67b5780cb34eaf3a41207e5a206f5d722a6c5862d2f634bbbf8429f40c",

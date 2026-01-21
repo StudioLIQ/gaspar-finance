@@ -30,6 +30,7 @@ type RuntimeContracts = {
   stablecoin?: string;
   oracleAdapter?: string;
   stabilityPool?: string;
+  stabilityPoolPackage?: string;
   branchCspr?: string;
   branchSCSPR?: string;
   treasury?: string;
@@ -89,6 +90,7 @@ type Contracts = {
   stablecoin: string | null;
   oracleAdapter: string | null;
   stabilityPool: string | null;
+  stabilityPoolPackage: string | null;
   branchCspr: string | null;
   branchSCSPR: string | null;
   treasury: string | null;
@@ -120,6 +122,9 @@ const buildContracts = (): Contracts => {
     stabilityPool:
       normalizeHash(runtimeContracts.stabilityPool) ??
       normalizeHash(process.env.NEXT_PUBLIC_STABILITY_POOL_HASH),
+    stabilityPoolPackage:
+      normalizeHash(runtimeContracts.stabilityPoolPackage) ??
+      normalizeHash(process.env.NEXT_PUBLIC_STABILITY_POOL_PACKAGE_HASH),
     branchCspr:
       normalizeHash(runtimeContracts.branchCspr) ??
       normalizeHash(process.env.NEXT_PUBLIC_BRANCH_CSPR_HASH),

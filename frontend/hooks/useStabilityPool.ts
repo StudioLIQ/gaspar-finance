@@ -231,9 +231,14 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
       }
 
       const spHash = CONTRACTS.stabilityPool;
+      const spPackageHash = CONTRACTS.stabilityPoolPackage;
       const gusdHash = CONTRACTS.stablecoin;
       if (!spHash || spHash === 'null' || !gusdHash || gusdHash === 'null') {
         setTxError('Contracts not deployed');
+        return false;
+      }
+      if (!spPackageHash || spPackageHash === 'null') {
+        setTxError('Stability Pool package hash not configured');
         return false;
       }
 
@@ -243,8 +248,11 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
 
       try {
         // Step 1: Approve gUSD spend by Stability Pool
+        // NOTE: Must use package hash as spender because Odra cross-contract calls
+        // use the caller's package hash, not contract hash
+        const spenderHash = spPackageHash.replace(/^(hash-|contract-package-)/, '');
         const approveArgs: DeployArg[] = [
-          { name: 'spender', clType: 'Key', value: `hash-${spHash.replace(/^hash-/, '')}` },
+          { name: 'spender', clType: 'Key', value: spenderHash },
           { name: 'amount', clType: 'U256', value: gusdMotes.toString() },
         ];
 
