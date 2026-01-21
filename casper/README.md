@@ -171,6 +171,9 @@ Do not hard-code ambiguous network values. All values must be confirmed via the 
 # Adjust a vault (add/withdraw collateral, borrow/repay debt)
 ./scripts/casper/cdp-adjust-vault.sh testnet "" /path/to/secret_key.pem cspr 1 2 add 10 borrow
 
+# Adjust interest rate
+./scripts/casper/cdp-adjust-rate.sh testnet "" /path/to/secret_key.pem cspr 1 300
+
 # Close a vault
 ./scripts/casper/cdp-close-vault.sh testnet "" /path/to/secret_key.pem cspr 1
 ```

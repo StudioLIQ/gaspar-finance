@@ -97,6 +97,13 @@ export interface CdpActions {
     isDebtRepay: boolean
   ) => Promise<boolean>;
 
+  // Adjust vault interest rate
+  adjustInterestRate: (
+    collateralType: CollateralType,
+    vaultId: bigint,
+    interestRateBps: number
+  ) => Promise<boolean>;
+
   // Close vault
   closeVault: (collateralType: CollateralType, vaultId: bigint) => Promise<boolean>;
 
@@ -686,6 +693,91 @@ export function useCdp(): CdpState & CdpActions {
     [isConnected, publicKey, signDeploy, refresh]
   );
 
+  // Adjust vault interest rate
+  const adjustInterestRate = useCallback(
+    async (collateralType: CollateralType, vaultId: bigint, interestRateBps: number): Promise<boolean> => {
+      if (!isConnected || !publicKey) {
+        setTxError('Wallet not connected');
+        return false;
+      }
+
+      setTxStatus('signing');
+      setTxError(null);
+      setTxHash(null);
+
+      try {
+        const routerHash = CONTRACTS.router;
+        if (!routerHash || routerHash === 'null') {
+          setTxError('Router contract not deployed');
+          setTxStatus('error');
+          return false;
+        }
+
+        if (
+          Number.isNaN(interestRateBps) ||
+          interestRateBps < CDP_CONSTANTS.MIN_INTEREST_RATE_BPS ||
+          interestRateBps > CDP_CONSTANTS.MAX_INTEREST_RATE_BPS
+        ) {
+          setTxError(
+            `Interest rate must be between ${CDP_CONSTANTS.MIN_INTEREST_RATE_BPS / 100}% and ${
+              CDP_CONSTANTS.MAX_INTEREST_RATE_BPS / 100
+            }%`
+          );
+          setTxStatus('error');
+          return false;
+        }
+
+        const args: DeployArg[] = [
+          { name: 'collateral_id', clType: 'U8', value: collateralType === 'cspr' ? '0' : '1' },
+          { name: 'vault_id', clType: 'U64', value: vaultId.toString() },
+          { name: 'interest_rate_bps', clType: 'U32', value: interestRateBps.toString() },
+        ];
+
+        const deployJson = buildContractCallDeploy(publicKey, {
+          contractHash: routerHash,
+          entryPoint: 'adjust_interest_rate',
+          args,
+        });
+
+        const signedDeploy = await signDeploy(deployJson);
+        if (!signedDeploy) {
+          setTxError('Signing cancelled');
+          setTxStatus('error');
+          return false;
+        }
+
+        setTxStatus('pending');
+        const deployHash = await submitDeploy(signedDeploy);
+        setTxHash(deployHash);
+
+        // Poll for status
+        for (let i = 0; i < DEPLOY_POLL_MAX_ATTEMPTS; i++) {
+          await new Promise((r) => setTimeout(r, DEPLOY_POLL_INTERVAL_MS));
+          const status = await getDeployStatus(deployHash);
+          if (status === 'success') {
+            setTxStatus('success');
+            await refresh();
+            return true;
+          } else if (status === 'error') {
+            setTxStatus('error');
+            setTxError('Transaction failed on-chain');
+            return false;
+          }
+        }
+
+        setTxStatus('error');
+        setTxError(TX_TIMEOUT_MESSAGES.transaction);
+        return false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Transaction failed';
+        setTxError(message);
+        setTxStatus('error');
+        return false;
+      }
+    },
+    [isConnected, publicKey, signDeploy, refresh]
+  );
+
   // Close vault - requires gUSD approval to repay debt
   const closeVault = useCallback(
     async (collateralType: CollateralType, vaultId: bigint): Promise<boolean> => {
@@ -840,6 +932,7 @@ export function useCdp(): CdpState & CdpActions {
     refresh,
     openVault,
     adjustVault,
+    adjustInterestRate,
     closeVault,
     previewOpenVault,
     resetTxState,

@@ -91,6 +91,11 @@ impl BranchCspr {
         self.require_router();
         let caller = owner;
 
+        // Defensive check (router validates too).
+        if interest_rate_bps > MAX_INTEREST_RATE_BPS {
+            self.env().revert(CdpError::InterestRateOutOfBounds);
+        }
+
         // Check minimum debt
         let min_debt = U256::from(MIN_DEBT_WHOLE) * U256::from(PRICE_SCALE);
         if debt_amount < min_debt {
@@ -259,6 +264,50 @@ impl BranchCspr {
         self.vaults.set(&vault_key, vault);
 
         // TODO: Handle token transfers
+    }
+
+    /// Adjust the interest rate for an existing vault.
+    pub fn adjust_interest_rate(&mut self, owner: Address, vault_id: u64, interest_rate_bps: u32) {
+        self.require_router();
+
+        // Defensive check (router validates too).
+        if interest_rate_bps > MAX_INTEREST_RATE_BPS {
+            self.env().revert(CdpError::InterestRateOutOfBounds);
+        }
+
+        let vault_key = VaultKey { owner, id: vault_id };
+        let mut vault = match self.vaults.get(&vault_key) {
+            Some(v) => v,
+            None => self.env().revert(CdpError::VaultNotFound),
+        };
+        if vault.collateral.is_zero() && vault.debt.is_zero() {
+            self.env().revert(CdpError::VaultNotFound);
+        }
+
+        // Accrue interest before changing the rate.
+        let current_time = self.env().get_block_time();
+        let accrual = accrue_interest(
+            vault.debt,
+            vault.interest_rate_bps,
+            vault.last_accrual_timestamp,
+            current_time,
+        );
+        vault.debt = accrual.new_debt;
+        vault.last_accrual_timestamp = current_time;
+
+        // Update total debt with accrued interest
+        if accrual.interest_accrued > U256::zero() {
+            let current_debt = self.total_debt.get().unwrap_or(U256::zero());
+            self.total_debt.set(current_debt + accrual.interest_accrued);
+        }
+
+        if vault.interest_rate_bps != interest_rate_bps {
+            self.remove_from_sorted_list(vault_key);
+            vault.interest_rate_bps = interest_rate_bps;
+            self.insert_into_sorted_list(vault_key, interest_rate_bps);
+        }
+
+        self.vaults.set(&vault_key, vault);
     }
 
     /// Close vault and withdraw all collateral

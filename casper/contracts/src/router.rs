@@ -133,6 +133,22 @@ impl Router {
         }
     }
 
+    /// Adjust the interest rate for an existing vault.
+    pub fn adjust_interest_rate(&mut self, collateral_id: CollateralId, vault_id: u64, interest_rate_bps: u32) {
+        self.validate_interest_rate(interest_rate_bps);
+
+        let caller = self.env().caller();
+        let branch_addr = self.get_branch_address(collateral_id);
+
+        let branch_args = runtime_args! {
+            "owner" => caller,
+            "vault_id" => vault_id,
+            "interest_rate_bps" => interest_rate_bps,
+        };
+        let branch_call = CallDef::new("adjust_interest_rate", true, branch_args);
+        self.env().call_contract::<()>(branch_addr, branch_call);
+    }
+
     /// Close vault and withdraw all collateral
     pub fn close_vault(&mut self, collateral_id: CollateralId, vault_id: u64) {
         self.require_not_safe_mode_for_close();

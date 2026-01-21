@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react';
 import { Header } from '@/components/Header';
 import { CdpVaultCard } from '@/components/CdpVaultCard';
+import { CdpAdjustVaultCard } from '@/components/CdpAdjustVaultCard';
 import { CdpOpenVaultCard } from '@/components/CdpOpenVaultCard';
 import { CdpStatsCard } from '@/components/CdpStatsCard';
 import { useCdp, type CollateralType } from '@/hooks/useCdp';
 
 export default function Home() {
   const [activeCollateral, setActiveCollateral] = useState<CollateralType>('cspr');
+  const [showAdjust, setShowAdjust] = useState(false);
   const [selectedVaultIds, setSelectedVaultIds] = useState<{
     cspr: bigint | null;
     scspr: bigint | null;
@@ -26,10 +28,16 @@ export default function Home() {
     txStatus,
     txError,
     openVault,
+    adjustVault,
+    adjustInterestRate,
     closeVault,
     previewOpenVault,
     resetTxState,
   } = useCdp();
+
+  useEffect(() => {
+    setShowAdjust(false);
+  }, [activeCollateral]);
 
   // Keep selection stable when vault lists change
   useEffect(() => {
@@ -129,11 +137,28 @@ export default function Home() {
               isLoading={isLoading}
               txStatus={txStatus}
               txError={txError}
+              onAdjust={() => setShowAdjust(true)}
               onClose={() =>
                 currentVault ? closeVault(activeCollateral, currentVault.vaultId) : Promise.resolve(false)
               }
               resetTxState={resetTxState}
             />
+
+            {/* Adjust Vault Card */}
+            {showAdjust && currentVault && (
+              <CdpAdjustVaultCard
+                vault={currentVault}
+                collateralType={activeCollateral}
+                collateralPrice={currentPrice}
+                balances={balances}
+                txStatus={txStatus}
+                txError={txError}
+                onAdjustVault={adjustVault}
+                onAdjustInterestRate={adjustInterestRate}
+                onDone={() => setShowAdjust(false)}
+                resetTxState={resetTxState}
+              />
+            )}
 
             {/* Open New Vault Card */}
             <CdpOpenVaultCard
