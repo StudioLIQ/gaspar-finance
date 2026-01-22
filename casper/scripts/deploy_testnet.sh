@@ -132,6 +132,24 @@ json_only() {
 # Helper Functions
 # =============================================================================
 
+# Convert package hash formats (contract-package-... / package-...) into a Key-friendly hash-...
+key_from_pkg() {
+    local pkg="$1"
+    if [ -z "$pkg" ] || [ "$pkg" = "null" ]; then
+        echo ""
+        return
+    fi
+    if [[ "$pkg" == contract-package-* ]]; then
+        echo "hash-${pkg#contract-package-}"
+        return
+    fi
+    if [[ "$pkg" == package-* ]]; then
+        echo "hash-${pkg#package-}"
+        return
+    fi
+    echo "$pkg"
+}
+
 # Initialize deployment state (compatible with bind-frontend.sh format)
 init_state() {
     cat > "$DEPLOY_STATE" << EOF
@@ -172,12 +190,15 @@ EOF
 save_contract() {
     local name="$1"
     local hash="$2"
-    local deploy_hash="${3:-}"
+    local package_hash="${3:-}"
+    local deploy_hash="${4:-}"
 
     jq --arg name "$name" \
        --arg hash "$hash" \
+       --arg package_hash "$package_hash" \
        --arg deploy_hash "$deploy_hash" \
        '.contracts[$name].hash = $hash
+        | .contracts[$name].package_hash = $package_hash
         | .contracts[$name].deploy_hash = $deploy_hash
         | .contracts[$name].deployed = true' \
        "$DEPLOY_STATE" > "$DEPLOY_STATE.tmp"
@@ -188,6 +209,12 @@ save_contract() {
 get_contract() {
     local name="$1"
     jq -r --arg name "$name" '.contracts[$name].hash // empty' "$DEPLOY_STATE"
+}
+
+# Get contract package hash from state
+get_package_hash() {
+    local name="$1"
+    jq -r --arg name "$name" '.contracts[$name].package_hash // empty' "$DEPLOY_STATE"
 }
 
 # Bind frontend: generate .env.local and config JSON
@@ -206,15 +233,18 @@ bind_frontend() {
     # Read contract hashes from state
     local REGISTRY_H=$(jq -r '.contracts.registry.hash // "null"' "$DEPLOY_STATE")
     local ROUTER_H=$(jq -r '.contracts.router.hash // "null"' "$DEPLOY_STATE")
+    local ROUTER_PKG=$(jq -r '.contracts.router.package_hash // "null"' "$DEPLOY_STATE")
     local STABLECOIN_H=$(jq -r '.contracts.stablecoin.hash // "null"' "$DEPLOY_STATE")
     local ORACLE_H=$(jq -r '.contracts.oracleAdapter.hash // "null"' "$DEPLOY_STATE")
     local SP_H=$(jq -r '.contracts.stabilityPool.hash // "null"' "$DEPLOY_STATE")
+    local SP_PKG=$(jq -r '.contracts.stabilityPool.package_hash // "null"' "$DEPLOY_STATE")
     local LE_H=$(jq -r '.contracts.liquidationEngine.hash // "null"' "$DEPLOY_STATE")
     local RE_H=$(jq -r '.contracts.redemptionEngine.hash // "null"' "$DEPLOY_STATE")
     local TREASURY_H=$(jq -r '.contracts.treasury.hash // "null"' "$DEPLOY_STATE")
     local BC_H=$(jq -r '.contracts.branchCspr.hash // "null"' "$DEPLOY_STATE")
     local BS_H=$(jq -r '.contracts.branchSCSPR.hash // "null"' "$DEPLOY_STATE")
     local YB_H=$(jq -r '.contracts.scsprYbToken.hash // "null"' "$DEPLOY_STATE")
+    local YB_PKG=$(jq -r '.contracts.scsprYbToken.package_hash // "null"' "$DEPLOY_STATE")
     local WQ_H=$(jq -r '.contracts.withdrawQueue.hash // "null"' "$DEPLOY_STATE")
 
     # 1. Create config JSON
@@ -226,15 +256,18 @@ bind_frontend() {
   "contracts": {
     "registry": "$REGISTRY_H",
     "router": "$ROUTER_H",
+    "routerPackage": "$ROUTER_PKG",
     "stablecoin": "$STABLECOIN_H",
     "oracleAdapter": "$ORACLE_H",
     "stabilityPool": "$SP_H",
+    "stabilityPoolPackage": "$SP_PKG",
     "liquidationEngine": "$LE_H",
     "redemptionEngine": "$RE_H",
     "treasury": "$TREASURY_H",
     "branchCspr": "$BC_H",
     "branchSCSPR": "$BS_H",
     "scsprYbToken": "$YB_H",
+    "scsprYbTokenPackage": "$YB_PKG",
     "withdrawQueue": "$WQ_H"
   },
   "generatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -255,15 +288,18 @@ NEXT_PUBLIC_CASPER_CHAIN_NAME=$CHAIN_NAME
 # Contract Addresses
 NEXT_PUBLIC_REGISTRY_HASH=$REGISTRY_H
 NEXT_PUBLIC_ROUTER_HASH=$ROUTER_H
+NEXT_PUBLIC_ROUTER_PACKAGE_HASH=$ROUTER_PKG
 NEXT_PUBLIC_STABLECOIN_HASH=$STABLECOIN_H
 NEXT_PUBLIC_ORACLE_ADAPTER_HASH=$ORACLE_H
 NEXT_PUBLIC_STABILITY_POOL_HASH=$SP_H
+NEXT_PUBLIC_STABILITY_POOL_PACKAGE_HASH=$SP_PKG
 NEXT_PUBLIC_LIQUIDATION_ENGINE_HASH=$LE_H
 NEXT_PUBLIC_REDEMPTION_ENGINE_HASH=$RE_H
 NEXT_PUBLIC_TREASURY_HASH=$TREASURY_H
 NEXT_PUBLIC_BRANCH_CSPR_HASH=$BC_H
 NEXT_PUBLIC_BRANCH_SCSPR_HASH=$BS_H
 NEXT_PUBLIC_SCSPR_YBTOKEN_HASH=$YB_H
+NEXT_PUBLIC_SCSPR_YBTOKEN_PACKAGE_HASH=$YB_PKG
 NEXT_PUBLIC_WITHDRAW_QUEUE_HASH=$WQ_H
 EOF
     log_success "Created: $FRONTEND_DIR/.env.local"
@@ -356,6 +392,75 @@ extract_contract_hash() {
     echo "$contract_hash"
 }
 
+# Extract contract package hash from deploy result (best-effort).
+extract_package_hash() {
+    local deploy_hash="$1"
+    local result
+    result=$(casper-client get-transaction --node-address "$NODE_ADDRESS" "$deploy_hash")
+    result=$(json_only "$result")
+
+    local package_hash
+
+    # Prefer explicit Contract write that includes contract_package_hash (Casper 2.0)
+    package_hash=$(echo "$result" | jq -r '
+        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | select((.kind | type) == "object" and .kind.Write.Contract != null)
+        | .kind.Write.Contract.contract_package_hash' 2>/dev/null | head -n 1)
+    if [ -n "$package_hash" ] && [ "$package_hash" != "null" ]; then
+        echo "$package_hash"
+        return
+    fi
+
+    # ContractPackage write
+    package_hash=$(echo "$result" | jq -r '
+        (.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | select((.kind | type) == "object" and .kind.Write.ContractPackage != null)
+        | .key' 2>/dev/null | head -n 1)
+    if [ -n "$package_hash" ] && [ "$package_hash" != "null" ]; then
+        echo "$package_hash"
+        return
+    fi
+
+    # Last resort: any package-like key from effects
+    package_hash=$(echo "$result" | jq -r '
+        [(.result.execution_info.execution_result.Version2.effects // .result.execution_info.execution_result.Version1.effects // [])[]
+        | .key
+        | select(type == "string" and (startswith("contract-package-") or startswith("package-")))]
+        | unique
+        | .[0]' 2>/dev/null)
+    if [ -n "$package_hash" ] && [ "$package_hash" != "null" ]; then
+        echo "$package_hash"
+        return
+    fi
+
+    echo ""
+}
+
+# Lookup package hash from contract hash via RPC query
+lookup_package_hash_from_contract() {
+    local contract_hash="$1"
+    local state_root
+    state_root=$(casper-client get-state-root-hash --node-address "$NODE_ADDRESS" 2>/dev/null | jq -r '.result.state_root_hash // empty')
+    if [ -z "$state_root" ]; then
+        echo ""
+        return
+    fi
+
+    local result
+    result=$(casper-client query-global-state \
+        --node-address "$NODE_ADDRESS" \
+        --state-root-hash "$state_root" \
+        --key "$contract_hash" 2>/dev/null || true)
+    result=$(json_only "$result")
+
+    if [ -z "$result" ]; then
+        echo ""
+        return
+    fi
+
+    echo "$result" | jq -r '.result.stored_value.Contract.contract_package_hash // .result.stored_value.AddressableEntity.package_hash // empty' 2>/dev/null
+}
+
 # Deploy a contract
 deploy_contract() {
     local state_key="$1"
@@ -426,6 +531,8 @@ deploy_contract() {
 
     local contract_hash
     contract_hash=$(extract_contract_hash "$deploy_hash")
+    local package_hash
+    package_hash=$(extract_package_hash "$deploy_hash")
 
     if [ -z "$contract_hash" ] || [ "$contract_hash" = "null" ]; then
         log_warn "Could not extract contract hash automatically"
@@ -438,8 +545,16 @@ deploy_contract() {
         fi
     fi
 
-    save_contract "$state_key" "$contract_hash" "$deploy_hash"
-    log_success "$module_name deployed: $contract_hash"
+    if [ -z "$package_hash" ] || [ "$package_hash" = "null" ]; then
+        package_hash=$(lookup_package_hash_from_contract "$contract_hash")
+    fi
+
+    if [ -z "$package_hash" ] || [ "$package_hash" = "null" ]; then
+        log_error "Could not resolve contract package hash for $module_name ($contract_hash)"
+    fi
+
+    save_contract "$state_key" "$contract_hash" "$package_hash" "$deploy_hash"
+    log_success "$module_name deployed: $contract_hash (pkg: $package_hash)"
 
     echo "$contract_hash"
 }
@@ -531,6 +646,8 @@ main() {
     # 1. AccessControl
     ACCESS_CONTROL_HASH=$(deploy_contract "accessControl" "AccessControl" "AccessControl.wasm" "call" \
         "initial_admin:key='${DEPLOYER}'")
+    ACCESS_CONTROL_PKG=$(get_package_hash "accessControl")
+    ACCESS_CONTROL_PKG_KEY=$(key_from_pkg "$ACCESS_CONTROL_PKG")
 
     # 2. Registry
     REGISTRY_HASH=$(deploy_contract "registry" "Registry" "Registry.wasm" "call" \
@@ -542,11 +659,15 @@ main() {
         "liquidation_penalty_bps:u32='$LIQUIDATION_PENALTY_BPS'" \
         "interest_min_bps:u32='$INTEREST_MIN_BPS'" \
         "interest_max_bps:u32='$INTEREST_MAX_BPS'")
+    REGISTRY_PKG=$(get_package_hash "registry")
+    REGISTRY_PKG_KEY=$(key_from_pkg "$REGISTRY_PKG")
 
     # 3. ScsprYbToken
     SCSPR_YBTOKEN_HASH=$(deploy_contract "scsprYbToken" "ScsprYbToken" "ScsprYbToken.wasm" "call" \
         "admin:key='$DEPLOYER'" \
         "operator:key='$DEPLOYER'")
+    SCSPR_YBTOKEN_PKG=$(get_package_hash "scsprYbToken")
+    SCSPR_YBTOKEN_PKG_KEY=$(key_from_pkg "$SCSPR_YBTOKEN_PKG")
 
     # =========================================================================
     # Phase 2: Registry-dependent Contracts
@@ -556,25 +677,35 @@ main() {
 
     # 4. WithdrawQueue
     WITHDRAW_QUEUE_HASH=$(deploy_contract "withdrawQueue" "WithdrawQueue" "WithdrawQueue.wasm" "call" \
-        "ybtoken:key='$SCSPR_YBTOKEN_HASH'" \
+        "ybtoken:key='$SCSPR_YBTOKEN_PKG_KEY'" \
         "admin:key='$DEPLOYER'")
+    WITHDRAW_QUEUE_PKG=$(get_package_hash "withdrawQueue")
+    WITHDRAW_QUEUE_PKG_KEY=$(key_from_pkg "$WITHDRAW_QUEUE_PKG")
 
     # 5. Router
     ROUTER_HASH=$(deploy_contract "router" "Router" "Router.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'")
+    ROUTER_PKG=$(get_package_hash "router")
+    ROUTER_PKG_KEY=$(key_from_pkg "$ROUTER_PKG")
 
     # 6. CsprUsd (Stablecoin)
     STABLECOIN_HASH=$(deploy_contract "stablecoin" "CsprUsd" "CsprUsd.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'")
+    STABLECOIN_PKG=$(get_package_hash "stablecoin")
+    STABLECOIN_PKG_KEY=$(key_from_pkg "$STABLECOIN_PKG")
 
     # 7. TokenAdapter
     TOKEN_ADAPTER_HASH=$(deploy_contract "tokenAdapter" "TokenAdapter" "TokenAdapter.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'")
+    TOKEN_ADAPTER_PKG=$(get_package_hash "tokenAdapter")
+    TOKEN_ADAPTER_PKG_KEY=$(key_from_pkg "$TOKEN_ADAPTER_PKG")
 
     # 8. OracleAdapter
     ORACLE_HASH=$(deploy_contract "oracleAdapter" "OracleAdapter" "OracleAdapter.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'")
+    ORACLE_PKG=$(get_package_hash "oracleAdapter")
+    ORACLE_PKG_KEY=$(key_from_pkg "$ORACLE_PKG")
 
     # =========================================================================
     # Phase 3: Branch Contracts
@@ -584,19 +715,25 @@ main() {
 
     # 9. BranchCspr
     BRANCH_CSPR_HASH=$(deploy_contract "branchCspr" "BranchCspr" "BranchCspr.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'")
+    BRANCH_CSPR_PKG=$(get_package_hash "branchCspr")
+    BRANCH_CSPR_PKG_KEY=$(key_from_pkg "$BRANCH_CSPR_PKG")
 
     # 10. BranchSCSPR
     BRANCH_SCSPR_HASH=$(deploy_contract "branchSCSPR" "BranchSCSPR" "BranchScspr.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'" \
-        "scspr_token:key='$SCSPR_YBTOKEN_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'" \
+        "scspr_token:key='$SCSPR_YBTOKEN_PKG_KEY'")
+    BRANCH_SCSPR_PKG=$(get_package_hash "branchSCSPR")
+    BRANCH_SCSPR_PKG_KEY=$(key_from_pkg "$BRANCH_SCSPR_PKG")
 
     # 11. Treasury
     TREASURY_HASH=$(deploy_contract "treasury" "Treasury" "Treasury.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "stablecoin:key='$STABLECOIN_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "stablecoin:key='$STABLECOIN_PKG_KEY'")
+    TREASURY_PKG=$(get_package_hash "treasury")
+    TREASURY_PKG_KEY=$(key_from_pkg "$TREASURY_PKG")
 
     # =========================================================================
     # Phase 4: Engines (with circular dependency)
@@ -606,25 +743,31 @@ main() {
 
     # 12. LiquidationEngine (with Router as placeholder for stability_pool)
     LIQUIDATION_ENGINE_HASH=$(deploy_contract "liquidationEngine" "LiquidationEngine" "LiquidationEngine.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'" \
-        "stability_pool:key='$ROUTER_HASH'" \
-        "styks_oracle:key='$ORACLE_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'" \
+        "stability_pool:key='$ROUTER_PKG_KEY'" \
+        "styks_oracle:key='$ORACLE_PKG_KEY'")
+    LIQUIDATION_ENGINE_PKG=$(get_package_hash "liquidationEngine")
+    LIQUIDATION_ENGINE_PKG_KEY=$(key_from_pkg "$LIQUIDATION_ENGINE_PKG")
 
     # 13. StabilityPool
     STABILITY_POOL_HASH=$(deploy_contract "stabilityPool" "StabilityPool" "StabilityPool.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'" \
-        "stablecoin:key='$STABLECOIN_HASH'" \
-        "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'" \
+        "stablecoin:key='$STABLECOIN_PKG_KEY'" \
+        "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'")
+    STABILITY_POOL_PKG=$(get_package_hash "stabilityPool")
+    STABILITY_POOL_PKG_KEY=$(key_from_pkg "$STABILITY_POOL_PKG")
 
     # 14. RedemptionEngine
     REDEMPTION_ENGINE_HASH=$(deploy_contract "redemptionEngine" "RedemptionEngine" "RedemptionEngine.wasm" "call" \
-        "registry:key='$REGISTRY_HASH'" \
-        "router:key='$ROUTER_HASH'" \
-        "stablecoin:key='$STABLECOIN_HASH'" \
-        "treasury:key='$TREASURY_HASH'" \
-        "styks_oracle:key='$ORACLE_HASH'")
+        "registry:key='$REGISTRY_PKG_KEY'" \
+        "router:key='$ROUTER_PKG_KEY'" \
+        "stablecoin:key='$STABLECOIN_PKG_KEY'" \
+        "treasury:key='$TREASURY_PKG_KEY'" \
+        "styks_oracle:key='$ORACLE_PKG_KEY'")
+    REDEMPTION_ENGINE_PKG=$(get_package_hash "redemptionEngine")
+    REDEMPTION_ENGINE_PKG_KEY=$(key_from_pkg "$REDEMPTION_ENGINE_PKG")
 
     # =========================================================================
     # Phase 5: Cross-contract Configuration
@@ -635,56 +778,60 @@ main() {
     # Fix circular dependency
     log_info "Configuring LiquidationEngine -> StabilityPool"
     call_contract "$LIQUIDATION_ENGINE_HASH" "set_stability_pool" \
-        "stability_pool:key='$STABILITY_POOL_HASH'"
+        "stability_pool:key='$STABILITY_POOL_PKG_KEY'"
 
     log_info "Configuring StabilityPool -> LiquidationEngine"
     call_contract "$STABILITY_POOL_HASH" "set_liquidation_engine" \
-        "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'"
+        "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'"
 
     # Configure Registry
     log_info "Configuring Registry..."
 
     call_contract "$REGISTRY_HASH" "set_router" \
-        "router:key='$ROUTER_HASH'"
+        "router:key='$ROUTER_PKG_KEY'"
 
     call_contract "$REGISTRY_HASH" "set_stablecoin" \
-        "stablecoin:key='$STABLECOIN_HASH'"
+        "stablecoin:key='$STABLECOIN_PKG_KEY'"
 
     call_contract "$REGISTRY_HASH" "set_treasury" \
-        "treasury:key='$TREASURY_HASH'"
+        "treasury:key='$TREASURY_PKG_KEY'"
 
     call_contract "$REGISTRY_HASH" "set_oracle" \
-        "oracle:key='$ORACLE_HASH'"
+        "oracle:key='$ORACLE_PKG_KEY'"
 
     call_contract "$REGISTRY_HASH" "set_stability_pool" \
-        "stability_pool:key='$STABILITY_POOL_HASH'"
+        "stability_pool:key='$STABILITY_POOL_PKG_KEY'"
 
     call_contract "$REGISTRY_HASH" "set_liquidation_engine" \
-        "liquidation_engine:key='$LIQUIDATION_ENGINE_HASH'"
+        "liquidation_engine:key='$LIQUIDATION_ENGINE_PKG_KEY'"
+
+    # Authorize Router to mint/burn gUSD
+    call_contract "$STABLECOIN_HASH" "add_minter" \
+        "minter:key='$ROUTER_PKG_KEY'"
 
     # Register branches
     log_info "Registering branches..."
 
     call_contract "$REGISTRY_HASH" "register_branch_cspr" \
-        "branch:key='$BRANCH_CSPR_HASH'" \
+        "branch:key='$BRANCH_CSPR_PKG_KEY'" \
         "decimals:u8='$CSPR_DECIMALS'" \
         "mcr_bps:u32='$MCR_BPS'"
 
     call_contract "$REGISTRY_HASH" "register_branch_scspr" \
-        "branch:key='$BRANCH_SCSPR_HASH'" \
-        "token_address:key='$SCSPR_YBTOKEN_HASH'" \
+        "branch:key='$BRANCH_SCSPR_PKG_KEY'" \
+        "token_address:key='$SCSPR_YBTOKEN_PKG_KEY'" \
         "decimals:u8='$SCSPR_DECIMALS'" \
         "mcr_bps:u32='$MCR_BPS'"
 
     # Configure ScsprYbToken
     log_info "Configuring ScsprYbToken -> WithdrawQueue"
     call_contract "$SCSPR_YBTOKEN_HASH" "set_withdraw_queue" \
-        "queue_address:key='$WITHDRAW_QUEUE_HASH'"
+        "queue_address:key='$WITHDRAW_QUEUE_PKG_KEY'"
 
     # Configure OracleAdapter
     log_info "Configuring OracleAdapter -> YbToken"
     call_contract "$ORACLE_HASH" "set_scspr_ybtoken" \
-        "ybtoken:key='$SCSPR_YBTOKEN_HASH'"
+        "ybtoken:key='$SCSPR_YBTOKEN_PKG_KEY'"
 
     # =========================================================================
     # Finalize

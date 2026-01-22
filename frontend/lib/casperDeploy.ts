@@ -6,6 +6,7 @@
 
 import { getNetworkConfig } from './config';
 import {
+  CLAccountHash,
   CLValueBuilder,
   CLPublicKey,
   DeployUtil,
@@ -177,7 +178,15 @@ function argToCLValue(arg: DeployArg) {
     case 'Key': {
       // Key can be hash-xxx or account-hash-xxx, etc.
       const keyStr = String(value);
-      return CLValueBuilder.key(CLValueBuilder.byteArray(hexToUint8Array(keyStr.replace(/^hash-/, ''))));
+      if (keyStr.startsWith('account-hash-')) {
+        const accountHashBytes = hexToUint8Array(keyStr.replace(/^account-hash-/, ''));
+        return CLValueBuilder.key(new CLAccountHash(accountHashBytes));
+      }
+
+      const hashBytes = hexToUint8Array(
+        keyStr.replace(/^(hash-|contract-package-|package-)/, '')
+      );
+      return CLValueBuilder.key(CLValueBuilder.byteArray(hashBytes));
     }
     case 'ByteArray': {
       const bytes = hexToUint8Array(String(value));
@@ -264,7 +273,7 @@ export function buildProxyCallerDeployWithSdk(
   const senderPubKey = CLPublicKey.fromHex(senderPublicKey);
 
   // Normalize contract package hash format (remove known prefixes if present)
-  const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-)/, '');
+  const packageHashClean = params.contractPackageHash.replace(/^(hash-|contract-package-|package-)/, '');
   const packageHashBytes = hexToUint8Array(packageHashClean);
   // Odra proxy_caller expects ContractPackageHash (ByteArray(32)), not Key.
   const packageHashArg = CLValueBuilder.byteArray(packageHashBytes);

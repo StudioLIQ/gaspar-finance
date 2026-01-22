@@ -428,10 +428,19 @@ export function useCdp(): CdpState & CdpActions {
             setTxStatus('error');
             return false;
           }
+          if (!routerPackageHash || routerPackageHash === 'null') {
+            setTxError('Router package hash not configured');
+            setTxStatus('error');
+            return false;
+          }
 
           // Step 1: Approve
           const approveArgs: DeployArg[] = [
-            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            {
+              name: 'spender',
+              clType: 'Key',
+              value: routerPackageHash.replace(/^(hash-|contract-package-|package-)/, ''),
+            },
             { name: 'amount', clType: 'U256', value: collateralMotes.toString() },
           ];
 
@@ -549,6 +558,7 @@ export function useCdp(): CdpState & CdpActions {
 
       try {
         const routerHash = CONTRACTS.router;
+        const routerPackageHash = CONTRACTS.routerPackage;
         if (!routerHash || routerHash === 'null') {
           setTxError('Router contract not deployed');
           setTxStatus('error');
@@ -561,6 +571,12 @@ export function useCdp(): CdpState & CdpActions {
 
         // Step 1: Approve gUSD if repaying debt
         if (isDebtRepay && debtAmount > BigInt(0)) {
+          if (!routerPackageHash || routerPackageHash === 'null') {
+            setTxError('Router package hash not configured');
+            setTxStatus('error');
+            return false;
+          }
+
           const gusdHash = CONTRACTS.stablecoin;
           if (!gusdHash || gusdHash === 'null') {
             setTxError('gUSD contract not deployed');
@@ -569,7 +585,11 @@ export function useCdp(): CdpState & CdpActions {
           }
 
           const approveArgs: DeployArg[] = [
-            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            {
+              name: 'spender',
+              clType: 'Key',
+              value: routerPackageHash.replace(/^(hash-|contract-package-|package-)/, ''),
+            },
             { name: 'amount', clType: 'U256', value: debtAmount.toString() },
           ];
 
@@ -614,6 +634,12 @@ export function useCdp(): CdpState & CdpActions {
 
         // Step 2: Approve stCSPR if depositing collateral (not withdrawing)
         if (collateralType === 'scspr' && !isCollateralWithdraw && collateralMotes > BigInt(0)) {
+          if (!routerPackageHash || routerPackageHash === 'null') {
+            setTxError('Router package hash not configured');
+            setTxStatus('error');
+            return false;
+          }
+
           const ybTokenHash = CONTRACTS.scsprYbtoken;
           if (!ybTokenHash || ybTokenHash === 'null') {
             setTxError('stCSPR contract not deployed');
@@ -622,7 +648,11 @@ export function useCdp(): CdpState & CdpActions {
           }
 
           const approveArgs: DeployArg[] = [
-            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            {
+              name: 'spender',
+              clType: 'Key',
+              value: routerPackageHash.replace(/^(hash-|contract-package-|package-)/, ''),
+            },
             { name: 'amount', clType: 'U256', value: collateralMotes.toString() },
           ];
 
@@ -735,6 +765,7 @@ export function useCdp(): CdpState & CdpActions {
 
       try {
         const routerHash = CONTRACTS.router;
+        const routerPackageHash = CONTRACTS.routerPackage;
         if (!routerHash || routerHash === 'null') {
           setTxError('Router contract not deployed');
           setTxStatus('error');
@@ -840,6 +871,12 @@ export function useCdp(): CdpState & CdpActions {
         // Step 1: Approve gUSD for debt repayment
         const debtAmount = vault.vault.debt;
         if (debtAmount > BigInt(0)) {
+          if (!routerPackageHash || routerPackageHash === 'null') {
+            setTxError('Router package hash not configured');
+            setTxStatus('error');
+            return false;
+          }
+
           const gusdHash = CONTRACTS.stablecoin;
           if (!gusdHash || gusdHash === 'null') {
             setTxError('gUSD contract not deployed');
@@ -848,7 +885,11 @@ export function useCdp(): CdpState & CdpActions {
           }
 
           const approveArgs: DeployArg[] = [
-            { name: 'spender', clType: 'Key', value: `hash-${routerHash.replace(/^hash-/, '')}` },
+            {
+              name: 'spender',
+              clType: 'Key',
+              value: routerPackageHash.replace(/^(hash-|contract-package-|package-)/, ''),
+            },
             { name: 'amount', clType: 'U256', value: debtAmount.toString() },
           ];
 
