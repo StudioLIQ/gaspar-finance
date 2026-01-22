@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useCasperWallet } from './useCasperWallet';
+import { useTxToast } from './useTxToast';
 import {
   getUserVaults,
   getBranchStatus,
@@ -150,6 +151,15 @@ export function useCdp(): CdpState & CdpActions {
   const [txStatus, setTxStatus] = useState<TxStatus>('idle');
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [txLabel, setTxLabel] = useState<string>('Transaction');
+
+  // Show toast for transaction status
+  useTxToast({
+    title: txLabel,
+    status: txStatus,
+    error: txError,
+    deployHash: txHash,
+  });
 
   // Refresh all data
   const refresh = useCallback(async () => {
@@ -310,6 +320,8 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
 
+      const vaultTypeLabel = collateralType === 'cspr' ? 'CSPR' : 'stCSPR';
+      setTxLabel(`Open ${vaultTypeLabel} Vault`);
       setTxStatus('signing');
       setTxError(null);
       setTxHash(null);
@@ -530,6 +542,7 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
 
+      setTxLabel('Adjust Vault');
       setTxStatus('signing');
       setTxError(null);
       setTxHash(null);
@@ -715,6 +728,7 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
 
+      setTxLabel('Adjust Interest Rate');
       setTxStatus('signing');
       setTxError(null);
       setTxHash(null);
@@ -810,6 +824,7 @@ export function useCdp(): CdpState & CdpActions {
         return false;
       }
 
+      setTxLabel('Close Vault');
       setTxStatus('signing');
       setTxError(null);
       setTxHash(null);
