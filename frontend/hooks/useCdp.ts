@@ -862,6 +862,7 @@ export function useCdp(): CdpState & CdpActions {
 
       try {
         const routerHash = CONTRACTS.router;
+        const routerPackageHash = CONTRACTS.routerPackage;
         if (!routerHash || routerHash === 'null') {
           setTxError('Router contract not deployed');
           setTxStatus('error');
