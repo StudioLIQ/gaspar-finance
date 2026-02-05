@@ -173,6 +173,32 @@ function parseU64FromBytes(bytes: Uint8Array, offset: number = 0): bigint {
   return result;
 }
 
+interface ParsedSafeModeState {
+  isActive: boolean;
+  triggeredAt: number;
+  reason: number;
+}
+
+function parseSafeModeState(bytes: Uint8Array): ParsedSafeModeState | null {
+  if (bytes.length < 1) return null;
+
+  let offset = 0;
+  const isActive = bytes[offset] !== 0;
+  offset += 1;
+
+  if (offset + 8 > bytes.length) return null;
+  const triggeredAt = Number(parseU64FromBytes(bytes, offset));
+  offset += 8;
+
+  const reason = offset < bytes.length ? bytes[offset] : 0;
+
+  return {
+    isActive,
+    triggeredAt,
+    reason,
+  };
+}
+
 /**
  * Compute Odra dictionary key for Var<T> (simple field access)
  * Key = blake2b(field_index_u32_be)
@@ -241,6 +267,10 @@ const ODRA_FIELD_INDEX = {
   RE_TOTAL_REDEEMED: 12,
   RE_TOTAL_COLLATERAL_DISTRIBUTED: 13,
   RE_TOTAL_FEES_COLLECTED: 14,
+  RE_SAFE_MODE: 15,
+
+  // Router: registry(1), safe_mode(2)
+  ROUTER_SAFE_MODE: 2,
 
   // CsprUsd: name(1), symbol(2), decimals(3), total_supply(4), balances(5), ...
   GUSD_BALANCES: 5,
@@ -943,6 +973,33 @@ async function fetchOdraVarU32(contractHash: string, fieldIndex: number): Promis
   } catch (err) {
     console.warn('[fetchOdraVarU32] Error:', err);
     return 0;
+  }
+}
+
+async function fetchOdraVarSafeMode(
+  contractHash: string,
+  fieldIndex: number
+): Promise<ParsedSafeModeState | null> {
+  try {
+    const result = await queryOdraVarField(contractHash, fieldIndex);
+    if (!result) return null;
+
+    const parsed = result.parsed;
+    if (Array.isArray(parsed)) {
+      const bytes = new Uint8Array(parsed);
+      return parseSafeModeState(bytes);
+    }
+
+    if (result.bytes) {
+      const bytes = hexToBytes(result.bytes);
+      // Skip 4-byte length prefix
+      return parseSafeModeState(bytes.slice(4));
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('[fetchOdraVarSafeMode] Error:', err);
+    return null;
   }
 }
 
@@ -1767,12 +1824,14 @@ export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStat
       totalScsprCollateral,
       totalDebtAbsorbed,
       depositorCount,
+      safeMode,
     ] = await Promise.all([
       fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_DEPOSITS),
       fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_CSPR_COLLATERAL),
       fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_SCSPR_COLLATERAL),
       fetchOdraVarU256(spHash, ODRA_FIELD_INDEX.SP_TOTAL_DEBT_ABSORBED),
       fetchOdraVarU64(spHash, ODRA_FIELD_INDEX.SP_DEPOSITOR_COUNT),
+      fetchOdraVarSafeMode(spHash, ODRA_FIELD_INDEX.SP_SAFE_MODE),
     ]);
 
     console.log('[RPC] getStabilityPoolStats:', {
@@ -1781,6 +1840,7 @@ export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStat
       totalScsprCollateral: totalScsprCollateral.toString(),
       totalDebtAbsorbed: totalDebtAbsorbed.toString(),
       depositorCount: depositorCount.toString(),
+      safeMode,
     });
 
     return {
@@ -1790,7 +1850,7 @@ export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStat
       totalScsprCollateral,
       totalDebtAbsorbed,
       depositorCount: Number(depositorCount),
-      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+      isSafeModeActive: safeMode?.isActive ?? false,
     };
   } catch (err) {
     console.warn('[RPC] getStabilityPoolStats failed:', err);
@@ -1834,12 +1894,14 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
       totalFeesCollected,
       baseFee,
       maxFee,
+      safeMode,
     ] = await Promise.all([
       fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_REDEEMED),
       fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_COLLATERAL_DISTRIBUTED),
       fetchOdraVarU256(reHash, ODRA_FIELD_INDEX.RE_TOTAL_FEES_COLLECTED),
       fetchOdraVarU32(reHash, ODRA_FIELD_INDEX.RE_BASE_FEE_BPS),
       fetchOdraVarU32(reHash, ODRA_FIELD_INDEX.RE_MAX_FEE_BPS),
+      fetchOdraVarSafeMode(reHash, ODRA_FIELD_INDEX.RE_SAFE_MODE),
     ]);
 
     console.log('[RPC] getRedemptionStats:', {
@@ -1848,6 +1910,7 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
       totalFeesCollected: totalFeesCollected.toString(),
       baseFee,
       maxFee,
+      safeMode,
     });
 
     // Use defaults if values are 0 (contract not initialized)
@@ -1862,7 +1925,7 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
       baseFee: actualBaseFee,
       maxFee: actualMaxFee,
       currentFee: actualBaseFee, // Current fee = base fee (dynamic calculation can be added)
-      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+      isSafeModeActive: safeMode?.isActive ?? false,
     };
   } catch (err) {
     console.warn('[RPC] getRedemptionStats failed:', err);
@@ -2183,23 +2246,31 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
   const branchHash = collateralType === 'cspr'
     ? CONTRACTS.branchCspr
     : CONTRACTS.branchSCSPR;
+  const routerHash = CONTRACTS.router;
 
   if (!branchHash || branchHash === 'null') {
     return null;
   }
 
   try {
+    const safeModePromise =
+      routerHash && routerHash !== 'null'
+        ? fetchOdraVarSafeMode(routerHash, ODRA_FIELD_INDEX.ROUTER_SAFE_MODE)
+        : Promise.resolve(null);
+
     // Fetch branch stats in parallel
-    const [totalCollateral, totalDebt, vaultCount] = await Promise.all([
+    const [totalCollateral, totalDebt, vaultCount, safeMode] = await Promise.all([
       fetchOdraVarU256(branchHash, ODRA_FIELD_INDEX.BRANCH_TOTAL_COLLATERAL),
       fetchOdraVarU256(branchHash, ODRA_FIELD_INDEX.BRANCH_TOTAL_DEBT),
       fetchOdraVarU64(branchHash, ODRA_FIELD_INDEX.BRANCH_VAULT_COUNT),
+      safeModePromise,
     ]);
 
     console.log(`[RPC] getBranchStatus(${collateralType}):`, {
       totalCollateral: totalCollateral.toString(),
       totalDebt: totalDebt.toString(),
       vaultCount: vaultCount.toString(),
+      safeMode,
     });
 
     return {
@@ -2207,7 +2278,7 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
       totalCollateral,
       totalDebt,
       vaultCount: Number(vaultCount),
-      isSafeModeActive: false, // TODO: Parse SafeModeState struct
+      isSafeModeActive: safeMode?.isActive ?? false,
     };
   } catch (err) {
     console.warn(`[RPC] getBranchStatus(${collateralType}) failed:`, err);
