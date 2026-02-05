@@ -179,6 +179,12 @@ interface ParsedSafeModeState {
   reason: number;
 }
 
+export interface SafeModeStatus {
+  isActive: boolean;
+  triggeredAt: number | null;
+  reason: number | null;
+}
+
 function parseSafeModeState(bytes: Uint8Array): ParsedSafeModeState | null {
   if (bytes.length < 1) return null;
 
@@ -999,6 +1005,26 @@ async function fetchOdraVarSafeMode(
     return null;
   } catch (err) {
     console.warn('[fetchOdraVarSafeMode] Error:', err);
+    return null;
+  }
+}
+
+// Get global safe mode status from router
+export async function getRouterSafeMode(): Promise<SafeModeStatus | null> {
+  const routerHash = CONTRACTS.router;
+  if (!routerHash || routerHash === 'null') {
+    return null;
+  }
+
+  try {
+    const safeMode = await fetchOdraVarSafeMode(routerHash, ODRA_FIELD_INDEX.ROUTER_SAFE_MODE);
+    return {
+      isActive: safeMode?.isActive ?? false,
+      triggeredAt: safeMode?.triggeredAt ?? null,
+      reason: safeMode?.reason ?? null,
+    };
+  } catch (err) {
+    console.warn('[RPC] getRouterSafeMode failed:', err);
     return null;
   }
 }

@@ -9,17 +9,31 @@ interface SafeModeBannerProps {
 }
 
 const SAFE_MODE_REASONS: Record<number, string> = {
-  0: 'OK',
+  0: 'No oracle error',
   1: 'Oracle unavailable',
   2: 'Oracle data stale',
-  3: 'Price deviation too high',
+  3: 'Price deviation detected',
   4: 'Invalid exchange rate',
   5: 'Decimals mismatch',
+};
+
+const SAFE_MODE_REASON_DETAILS: Record<number, string> = {
+  0: 'Safe Mode should clear once the protocol confirms stable oracle data.',
+  1: 'Price feed could not be reached or returned no data.',
+  2: 'Last oracle update exceeded the maximum allowed age.',
+  3: 'Price moved beyond the allowed deviation from the last good price.',
+  4: 'Oracle returned a zero or out-of-range rate.',
+  5: 'Oracle decimals did not match the expected configuration.',
 };
 
 export function formatSafeModeReason(reason?: number | null): string {
   if (reason === null || reason === undefined) return 'Unknown';
   return SAFE_MODE_REASONS[reason] ?? `Unknown (${reason})`;
+}
+
+function formatSafeModeReasonDetail(reason?: number | null): string | null {
+  if (reason === null || reason === undefined) return null;
+  return SAFE_MODE_REASON_DETAILS[reason] ?? null;
 }
 
 function formatSafeModeTime(triggeredAt?: number | null): string | null {
@@ -46,6 +60,7 @@ export function SafeModeBanner({
 
   const reasonLabel = formatSafeModeReason(reason);
   const triggeredLabel = formatSafeModeTime(triggeredAt);
+  const reasonDetail = formatSafeModeReasonDetail(reason);
 
   return (
     <div className={`mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 ${className ?? ''}`}>
@@ -75,8 +90,43 @@ export function SafeModeBanner({
             Reason: {reasonLabel}
             {triggeredLabel ? ` • Triggered: ${triggeredLabel}` : ' • Triggered: Unknown'}
           </p>
+          {reasonDetail && (
+            <p className="text-xs text-amber-700/80">
+              {reasonDetail}
+            </p>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export function SafeModeBadge({
+  isActive,
+  reason,
+  triggeredAt,
+  className,
+}: {
+  isActive: boolean;
+  reason?: number | null;
+  triggeredAt?: number | null;
+  className?: string;
+}) {
+  if (!isActive) return null;
+
+  const reasonLabel = formatSafeModeReason(reason);
+  const triggeredLabel = formatSafeModeTime(triggeredAt);
+  const title = `Safe Mode: ${reasonLabel}${triggeredLabel ? ` (${triggeredLabel})` : ''}`;
+
+  return (
+    <div
+      className={`inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1 ${className ?? ''}`}
+      title={title}
+      aria-label={title}
+    >
+      <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+      <span>Safe Mode</span>
+      <span className="hidden xl:inline text-amber-700/80">• {reasonLabel}</span>
     </div>
   );
 }

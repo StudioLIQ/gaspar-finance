@@ -6,9 +6,11 @@ import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { useBalances } from '@/hooks/useBalances';
+import { useSafeMode } from '@/hooks/useSafeMode';
 import { SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
 import { formatCsprAmount, formatGusdAmount } from '@/lib/casperRpc';
+import { SafeModeBadge } from '@/components/SafeModeBanner';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
@@ -21,6 +23,7 @@ export function Header() {
   const pathname = usePathname();
   const { isInstalled, isConnected, publicKey, isBusy, connect, disconnect } = useCasperWallet();
   const { balances, isLoading: isLoadingBalances } = useBalances({ isConnected, publicKey });
+  const { safeMode } = useSafeMode();
 
   const buttonLabel = !isInstalled
     ? 'Casper Wallet required'
@@ -73,7 +76,12 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
-
+          <SafeModeBadge
+            isActive={Boolean(safeMode?.isActive)}
+            reason={safeMode?.reason}
+            triggeredAt={safeMode?.triggeredAt}
+            className="hidden md:inline-flex"
+          />
           {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
             <div className="hidden lg:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
@@ -120,6 +128,17 @@ export function Header() {
           </Button>
         </div>
       </div>
+
+      {safeMode?.isActive && (
+        <div className="md:hidden px-4 pb-3">
+          <SafeModeBadge
+            isActive
+            reason={safeMode.reason}
+            triggeredAt={safeMode.triggeredAt}
+            className="w-full justify-center"
+          />
+        </div>
+      )}
 
       {/* Mobile Navigation */}
       <nav className="sm:hidden border-t border-gray-100 px-4 py-2 flex gap-2" aria-label="Mobile navigation">
