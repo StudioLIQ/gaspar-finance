@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatCard } from '@/components/ui/StatCard';
+import { SafeModeBanner } from '@/components/SafeModeBanner';
 import { useStabilityPool } from '@/hooks/useStabilityPool';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { CONTRACTS } from '@/lib/config';
@@ -133,12 +134,14 @@ function DepositCard({
 // Withdraw Card Component
 function WithdrawCard({
   userDeposit,
+  isSafeModeActive,
   txStatus,
   txError,
   onWithdraw,
   resetTxState,
 }: {
   userDeposit: { depositedAmount: bigint; depositedFormatted: string } | null;
+  isSafeModeActive: boolean;
   txStatus: string;
   txError: string | null;
   onWithdraw: (amount: string) => Promise<boolean>;
@@ -166,6 +169,7 @@ function WithdrawCard({
     parseFloat(amount) > 0 &&
     userDeposit &&
     userDeposit.depositedAmount > BigInt(0) &&
+    !isSafeModeActive &&
     !isProcessing;
 
   return (
@@ -207,6 +211,12 @@ function WithdrawCard({
           </div>
         )}
 
+        {isSafeModeActive && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+            Withdrawals are paused while Safe Mode is active.
+          </div>
+        )}
+
         {txStatus === 'success' && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700">
             Withdrawal successful!
@@ -236,6 +246,7 @@ function WithdrawCard({
 // Gains Card Component
 function GainsCard({
   userDeposit,
+  isSafeModeActive,
   txStatus,
   txError,
   onClaimGains,
@@ -247,6 +258,7 @@ function GainsCard({
     pendingScsprGains: bigint;
     scsprGainsFormatted: string;
   } | null;
+  isSafeModeActive: boolean;
   txStatus: string;
   txError: string | null;
   onClaimGains: () => Promise<boolean>;
@@ -264,7 +276,7 @@ function GainsCard({
     (userDeposit.pendingCsprGains > BigInt(0) || userDeposit.pendingScsprGains > BigInt(0));
 
   const isProcessing = txStatus === 'signing' || txStatus === 'approving' || txStatus === 'pending';
-  const canClaim = isConnected && hasGains && !isProcessing;
+  const canClaim = isConnected && hasGains && !isSafeModeActive && !isProcessing;
 
   return (
     <Card title="Your Gains" subtitle="Accumulated liquidation rewards">
@@ -287,6 +299,12 @@ function GainsCard({
         {txError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
             {txError}
+          </div>
+        )}
+
+        {isSafeModeActive && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+            Claims are paused while Safe Mode is active.
           </div>
         )}
 
@@ -326,6 +344,7 @@ function PoolStatsCard({
   stats: {
     totalDepositsFormatted: string;
     estimatedAprBps: number;
+    isSafeModeActive: boolean;
   } | null;
   isLoading: boolean;
 }) {
@@ -363,8 +382,8 @@ function PoolStatsCard({
         />
         <StatCard
           label="Status"
-          value="Active"
-          subtitle="Ready for liquidations"
+          value={stats?.isSafeModeActive ? 'Paused' : 'Active'}
+          subtitle={stats?.isSafeModeActive ? 'Safe Mode' : 'Ready for liquidations'}
         />
       </div>
     </Card>
@@ -400,6 +419,13 @@ export default function StabilityPoolPage() {
       <Header />
 
       <main className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-10">
+        <SafeModeBanner
+          isActive={Boolean(sp.poolStats?.isSafeModeActive)}
+          triggeredAt={sp.poolStats?.safeModeTriggeredAt}
+          reason={sp.poolStats?.safeModeReason}
+          context="Withdrawals and claims are paused during Safe Mode. Deposits remain available."
+        />
+
         {/* Info Banner */}
         <div className="mb-8 bg-blue-50 border border-blue-200 rounded-xl p-4">
           <h3 className="text-sm font-medium text-blue-800 mb-1">
@@ -429,6 +455,7 @@ export default function StabilityPoolPage() {
           />
           <WithdrawCard
             userDeposit={sp.userDeposit}
+            isSafeModeActive={sp.poolStats?.isSafeModeActive ?? false}
             txStatus={sp.txStatus}
             txError={sp.txError}
             onWithdraw={sp.withdraw}
@@ -440,6 +467,7 @@ export default function StabilityPoolPage() {
         <div className="mb-8">
           <GainsCard
             userDeposit={sp.userDeposit}
+            isSafeModeActive={sp.poolStats?.isSafeModeActive ?? false}
             txStatus={sp.txStatus}
             txError={sp.txError}
             onClaimGains={sp.claimGains}

@@ -1661,6 +1661,8 @@ export interface StabilityPoolProtocolStats {
   totalDebtAbsorbed: bigint;
   depositorCount: number;
   isSafeModeActive: boolean;
+  safeModeTriggeredAt: number | null;
+  safeModeReason: number | null;
 }
 
 /**
@@ -1851,6 +1853,8 @@ export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStat
       totalDebtAbsorbed,
       depositorCount: Number(depositorCount),
       isSafeModeActive: safeMode?.isActive ?? false,
+      safeModeTriggeredAt: safeMode?.triggeredAt ?? null,
+      safeModeReason: safeMode?.reason ?? null,
     };
   } catch (err) {
     console.warn('[RPC] getStabilityPoolStats failed:', err);
@@ -1862,6 +1866,8 @@ export async function getStabilityPoolStats(): Promise<StabilityPoolProtocolStat
       totalDebtAbsorbed: BigInt(0),
       depositorCount: 0,
       isSafeModeActive: false,
+      safeModeTriggeredAt: null,
+      safeModeReason: null,
     };
   }
 }
@@ -1877,6 +1883,8 @@ export interface RedemptionProtocolStats {
   maxFee: number;
   currentFee: number;
   isSafeModeActive: boolean;
+  safeModeTriggeredAt: number | null;
+  safeModeReason: number | null;
 }
 
 // Get redemption protocol stats
@@ -1926,6 +1934,8 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
       maxFee: actualMaxFee,
       currentFee: actualBaseFee, // Current fee = base fee (dynamic calculation can be added)
       isSafeModeActive: safeMode?.isActive ?? false,
+      safeModeTriggeredAt: safeMode?.triggeredAt ?? null,
+      safeModeReason: safeMode?.reason ?? null,
     };
   } catch (err) {
     console.warn('[RPC] getRedemptionStats failed:', err);
@@ -1938,6 +1948,8 @@ export async function getRedemptionStats(): Promise<RedemptionProtocolStats | nu
       maxFee: 500,
       currentFee: 50,
       isSafeModeActive: false,
+      safeModeTriggeredAt: null,
+      safeModeReason: null,
     };
   }
 }
@@ -2014,6 +2026,8 @@ export interface BranchStatus {
   totalDebt: bigint;
   vaultCount: number;
   isSafeModeActive: boolean;
+  safeModeTriggeredAt: number | null;
+  safeModeReason: number | null;
 }
 
 /**
@@ -2279,6 +2293,8 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
       totalDebt,
       vaultCount: Number(vaultCount),
       isSafeModeActive: safeMode?.isActive ?? false,
+      safeModeTriggeredAt: safeMode?.triggeredAt ?? null,
+      safeModeReason: safeMode?.reason ?? null,
     };
   } catch (err) {
     console.warn(`[RPC] getBranchStatus(${collateralType}) failed:`, err);
@@ -2288,6 +2304,8 @@ export async function getBranchStatus(collateralType: CollateralType): Promise<B
       totalDebt: BigInt(0),
       vaultCount: 0,
       isSafeModeActive: false,
+      safeModeTriggeredAt: null,
+      safeModeReason: null,
     };
   }
 }

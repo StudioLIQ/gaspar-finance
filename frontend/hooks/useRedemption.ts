@@ -63,6 +63,9 @@ export interface RedemptionStats {
   totalCollateralDistributed: bigint;
   // Whether safe mode is active (redemptions blocked)
   isSafeModeActive: boolean;
+  // Safe mode metadata (unix timestamp seconds + oracle status code)
+  safeModeTriggeredAt: number | null;
+  safeModeReason: number | null;
 }
 
 export interface RedemptionState {
@@ -155,6 +158,8 @@ export function useRedemption(): RedemptionState & RedemptionActions {
           totalRedeemedFormatted: chainStats.totalRedeemedFormatted,
           totalCollateralDistributed: chainStats.totalCollateralDistributed,
           isSafeModeActive: chainStats.isSafeModeActive,
+          safeModeTriggeredAt: chainStats.safeModeTriggeredAt,
+          safeModeReason: chainStats.safeModeReason,
         };
         setStats(statsData);
       } else {
@@ -165,6 +170,8 @@ export function useRedemption(): RedemptionState & RedemptionActions {
           totalRedeemedFormatted: '0',
           totalCollateralDistributed: BigInt(0),
           isSafeModeActive: false,
+          safeModeTriggeredAt: null,
+          safeModeReason: null,
         });
       }
 

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatCard } from '@/components/ui/StatCard';
+import { SafeModeBanner } from '@/components/SafeModeBanner';
 import { useRedemption, type CollateralType, type RedemptionQuote } from '@/hooks/useRedemption';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { CONTRACTS, PROTOCOL_PARAMS } from '@/lib/config';
@@ -190,14 +191,6 @@ function RedemptionCard({
         {/* Quote Display */}
         <QuoteDisplay quote={quote} />
 
-        {/* Safe Mode Warning */}
-        {stats?.isSafeModeActive && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
-            Redemptions are currently paused due to Safe Mode. This happens when oracle prices
-            are stale or unreliable.
-          </div>
-        )}
-
         {/* Error Display */}
         {txError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
@@ -325,6 +318,13 @@ export default function RedeemPage() {
       <Header />
 
       <main className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-10">
+        <SafeModeBanner
+          isActive={Boolean(redemption.stats?.isSafeModeActive)}
+          triggeredAt={redemption.stats?.safeModeTriggeredAt}
+          reason={redemption.stats?.safeModeReason}
+          context="Redemptions are paused while Safe Mode is active."
+        />
+
         {/* Info Banner */}
         <div className="mb-8 bg-blue-50 border border-blue-200 rounded-xl p-4">
           <h3 className="text-sm font-medium text-blue-800 mb-1">What are Redemptions?</h3>

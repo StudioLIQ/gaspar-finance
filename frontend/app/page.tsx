@@ -6,6 +6,7 @@ import { CdpVaultCard } from '@/components/CdpVaultCard';
 import { CdpAdjustVaultCard } from '@/components/CdpAdjustVaultCard';
 import { CdpOpenVaultCard } from '@/components/CdpOpenVaultCard';
 import { CdpStatsCard } from '@/components/CdpStatsCard';
+import { SafeModeBanner } from '@/components/SafeModeBanner';
 import { useCdp, type CollateralType } from '@/hooks/useCdp';
 
 export default function Home() {
@@ -66,12 +67,25 @@ export default function Home() {
       ? vaultsForType.find((v) => v.vaultId === selectedIdForType)
       : null) ?? vaultsForType[0] ?? null;
   const currentPrice = activeCollateral === 'cspr' ? csprPrice : scsprPrice;
+  const safeModeSource =
+    csprBranch?.isSafeModeActive
+      ? csprBranch
+      : scsprBranch?.isSafeModeActive
+        ? scsprBranch
+        : null;
 
   return (
     <div className="min-h-screen">
       <Header />
 
       <main className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 py-10">
+        <SafeModeBanner
+          isActive={Boolean(safeModeSource?.isSafeModeActive)}
+          triggeredAt={safeModeSource?.safeModeTriggeredAt}
+          reason={safeModeSource?.safeModeReason}
+          context="Vault operations are limited while Safe Mode is active."
+        />
+
         {/* Collateral Type Tabs */}
         <div className="flex justify-center">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 shadow-sm">

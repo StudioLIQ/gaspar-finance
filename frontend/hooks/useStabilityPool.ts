@@ -51,6 +51,10 @@ export interface StabilityPoolStats {
   totalScsprGains: bigint;
   // Estimated APR (in basis points, e.g., 500 = 5%)
   estimatedAprBps: number;
+  // Safe mode status
+  isSafeModeActive: boolean;
+  safeModeTriggeredAt: number | null;
+  safeModeReason: number | null;
 }
 
 export interface StabilityPoolState {
@@ -135,6 +139,9 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
           totalCsprGains: stats.totalCsprCollateral,
           totalScsprGains: stats.totalScsprCollateral,
           estimatedAprBps: 0, // APR calculation would require historical data
+          isSafeModeActive: stats.isSafeModeActive,
+          safeModeTriggeredAt: stats.safeModeTriggeredAt,
+          safeModeReason: stats.safeModeReason,
         };
         setPoolStats(poolStatsData);
       } else {
@@ -145,6 +152,9 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
           totalCsprGains: BigInt(0),
           totalScsprGains: BigInt(0),
           estimatedAprBps: 0,
+          isSafeModeActive: false,
+          safeModeTriggeredAt: null,
+          safeModeReason: null,
         });
       }
 
@@ -355,6 +365,11 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
         return false;
       }
 
+      if (poolStats?.isSafeModeActive) {
+        setTxError('Withdrawals are currently paused (Safe Mode active)');
+        return false;
+      }
+
       const amount = parseCsprInput(gusdAmount);
       if (amount === null || amount <= BigInt(0)) {
         setTxError('Invalid gUSD amount');
@@ -430,13 +445,18 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
         return false;
       }
     },
-    [isConnected, publicKey, userDeposit, signDeploy, refresh]
+    [isConnected, publicKey, userDeposit, poolStats, signDeploy, refresh]
   );
 
   // Claim accumulated gains (CSPR + stCSPR)
   const claimGains = useCallback(async (): Promise<boolean> => {
     if (!isConnected || !publicKey) {
       setTxError('Wallet not connected');
+      return false;
+    }
+
+    if (poolStats?.isSafeModeActive) {
+      setTxError('Claims are currently paused (Safe Mode active)');
       return false;
     }
 
@@ -503,7 +523,7 @@ export function useStabilityPool(): StabilityPoolState & StabilityPoolActions {
       setTxStatus('error');
       return false;
     }
-  }, [isConnected, publicKey, userDeposit, signDeploy, refresh]);
+  }, [isConnected, publicKey, userDeposit, poolStats, signDeploy, refresh]);
 
   return {
     // State
