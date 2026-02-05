@@ -3,14 +3,21 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useId, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { useCasperWallet } from '@/hooks/useCasperWallet';
 import { useBalances } from '@/hooks/useBalances';
 import { useSafeMode } from '@/hooks/useSafeMode';
 import { SUPPORTED_WALLET } from '@/lib/config';
 import { shortenPublicKey, cn } from '@/lib/utils';
-import { formatCsprAmount, formatGusdAmount } from '@/lib/casperRpc';
-import { SafeModeBadge } from '@/components/SafeModeBanner';
+import { formatCsprAmount, formatGusdAmount, type SafeModeStatus } from '@/lib/casperRpc';
+import {
+  SafeModeBadge,
+  formatSafeModeReason,
+  formatSafeModeReasonDetail,
+  formatSafeModeTime,
+} from '@/components/SafeModeBanner';
 
 const NAV_ITEMS = [
   { href: '/', label: 'CDP' },
@@ -19,11 +26,93 @@ const NAV_ITEMS = [
   { href: '/redeem', label: 'Redeem' },
 ];
 
+function SafeModeIndicator({
+  safeMode,
+  className,
+}: {
+  safeMode: SafeModeStatus | null;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const popoverId = useId();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!safeMode?.isActive) setIsOpen(false);
+  }, [safeMode?.isActive]);
+
+  if (!safeMode?.isActive) return null;
+
+  const reasonLabel = formatSafeModeReason(safeMode.reason);
+  const reasonDetail = formatSafeModeReasonDetail(safeMode.reason);
+  const triggeredLabel = formatSafeModeTime(safeMode.triggeredAt);
+
+  return (
+    <div ref={containerRef} className={cn('relative', className)}>
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={popoverId}
+        aria-haspopup="dialog"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+      >
+        <SafeModeBadge
+          isActive
+          reason={safeMode.reason}
+          triggeredAt={safeMode.triggeredAt}
+          className="pointer-events-none"
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          id={popoverId}
+          role="dialog"
+          aria-label="Safe Mode details"
+          className="absolute right-0 mt-2 w-72 rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg backdrop-blur"
+        >
+          <p className="text-xs uppercase tracking-wider text-amber-600 font-semibold">
+            Safe Mode Details
+          </p>
+          <p className="mt-2 text-sm text-gray-900 font-medium">{reasonLabel}</p>
+          {reasonDetail && (
+            <p className="mt-1 text-xs text-gray-600">{reasonDetail}</p>
+          )}
+          <div className="mt-3 text-xs text-gray-500">
+            Triggered: {triggeredLabel ?? 'Unknown'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Header() {
   const pathname = usePathname();
   const { isInstalled, isConnected, publicKey, isBusy, connect, disconnect } = useCasperWallet();
   const { balances, isLoading: isLoadingBalances } = useBalances({ isConnected, publicKey });
   const { safeMode } = useSafeMode();
+  const prevSafeModeRef = useRef<boolean | null>(null);
 
   const buttonLabel = !isInstalled
     ? 'Casper Wallet required'
@@ -39,6 +128,32 @@ export function Header() {
       await connect();
     }
   };
+
+  useEffect(() => {
+    if (!safeMode) return;
+    if (prevSafeModeRef.current === null) {
+      prevSafeModeRef.current = safeMode.isActive;
+      return;
+    }
+    if (safeMode.isActive === prevSafeModeRef.current) return;
+
+    const reasonLabel = formatSafeModeReason(safeMode.reason);
+    const reasonDetail = formatSafeModeReasonDetail(safeMode.reason);
+
+    if (safeMode.isActive) {
+      toast.warning('Safe Mode activated', {
+        description: reasonDetail ?? `Reason: ${reasonLabel}`,
+        duration: 8000,
+      });
+    } else {
+      toast.success('Safe Mode cleared', {
+        description: 'Oracle data stabilized. Protocol actions resumed.',
+        duration: 5000,
+      });
+    }
+
+    prevSafeModeRef.current = safeMode.isActive;
+  }, [safeMode]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur">
@@ -76,12 +191,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
-          <SafeModeBadge
-            isActive={Boolean(safeMode?.isActive)}
-            reason={safeMode?.reason}
-            triggeredAt={safeMode?.triggeredAt}
-            className="hidden md:inline-flex"
-          />
+          <SafeModeIndicator safeMode={safeMode} className="hidden md:block" />
           {/* Wallet Info - Address & Balances */}
           {isConnected && publicKey && (
             <div className="hidden lg:flex items-center gap-4 bg-gray-50 rounded-lg px-4 py-2">
@@ -131,12 +241,7 @@ export function Header() {
 
       {safeMode?.isActive && (
         <div className="md:hidden px-4 pb-3">
-          <SafeModeBadge
-            isActive
-            reason={safeMode.reason}
-            triggeredAt={safeMode.triggeredAt}
-            className="w-full justify-center"
-          />
+          <SafeModeIndicator safeMode={safeMode} className="w-full" />
         </div>
       )}
 

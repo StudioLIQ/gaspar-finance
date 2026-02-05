@@ -31,12 +31,12 @@ export function formatSafeModeReason(reason?: number | null): string {
   return SAFE_MODE_REASONS[reason] ?? `Unknown (${reason})`;
 }
 
-function formatSafeModeReasonDetail(reason?: number | null): string | null {
+export function formatSafeModeReasonDetail(reason?: number | null): string | null {
   if (reason === null || reason === undefined) return null;
   return SAFE_MODE_REASON_DETAILS[reason] ?? null;
 }
 
-function formatSafeModeTime(triggeredAt?: number | null): string | null {
+export function formatSafeModeTime(triggeredAt?: number | null): string | null {
   if (!triggeredAt || triggeredAt <= 0) return null;
   const date = new Date(triggeredAt * 1000);
   return date.toLocaleString(undefined, {
