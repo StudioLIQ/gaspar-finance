@@ -36,6 +36,12 @@ function SafeModeIndicator({
   const [isOpen, setIsOpen] = useState(false);
   const popoverId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const impactedActions = [
+    'Open or close a vault',
+    'Borrow more or withdraw collateral',
+    'Redeem gUSD for collateral',
+    'Withdraw or claim Stability Pool gains',
+  ];
 
   useEffect(() => {
     if (!isOpen) return;
@@ -59,6 +65,12 @@ function SafeModeIndicator({
   useEffect(() => {
     if (!safeMode?.isActive) setIsOpen(false);
   }, [safeMode?.isActive]);
+
+  useEffect(() => {
+    const handleOpen = () => setIsOpen(true);
+    window.addEventListener('safe-mode:open', handleOpen);
+    return () => window.removeEventListener('safe-mode:open', handleOpen);
+  }, []);
 
   if (!safeMode?.isActive) return null;
 
@@ -100,6 +112,17 @@ function SafeModeIndicator({
           )}
           <div className="mt-3 text-xs text-gray-500">
             Triggered: {triggeredLabel ?? 'Unknown'}
+          </div>
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-gray-700">Impacted actions</p>
+            <ul className="mt-2 list-disc list-inside text-xs text-gray-600 space-y-1">
+              {impactedActions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-gray-500">
+              Deposits and debt repayments remain available.
+            </p>
           </div>
         </div>
       )}
@@ -144,6 +167,10 @@ export function Header() {
       toast.warning('Safe Mode activated', {
         description: reasonDetail ?? `Reason: ${reasonLabel}`,
         duration: 8000,
+        action: {
+          label: '자세히 보기',
+          onClick: () => window.dispatchEvent(new CustomEvent('safe-mode:open')),
+        },
       });
     } else {
       toast.success('Safe Mode cleared', {
